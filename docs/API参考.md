@@ -1,0 +1,129 @@
+# Bee Go SDK API 参考
+
+## 调用方式
+
+每个消息或事件回调都应使用本次回调的机器人上下文创建 SDK：
+
+```go
+bee, err := NewBeeAPI(robotJSON)
+if err != nil {
+    return MessageContinue
+}
+
+_, _ = bee.Friend(friendID).SendText("你好哦")
+_, _ = bee.Group(groupID).SendText("大家好")
+_, _ = bee.Channel(channelID).SendImage("图片", imageURL)
+_, _ = bee.ChannelDM(guildID).SendText("频道私信")
+```
+
+`BeeAPI` 包含当前回调的 `plugin_id`、`msg_id` 和 `event_id`，禁止全局缓存后跨消息使用。
+
+## 插件应用数据目录
+
+使用 SDK 获取当前插件专属的数据目录：
+
+```go
+dataDir, err := bee.GetAppDataDir()
+if err != nil {
+    return
+}
+
+configFile := filepath.Join(dataDir, "config.json")
+```
+
+生产环境返回：
+
+```text
+Bee框架根目录\plugin_data\插件名称
+```
+
+该方法根据 Worker 可执行文件所在目录计算，不依赖可能发生变化的当前工作目录。插件配置、数据库、缓存和文件日志都应写入此目录，不要写到 `plugin`、`temp_plugin` 或 DLL 所在目录。
+
+## 协议规则
+
+- 分隔符：`%@#bee#@%`
+- 操作码 31、45、48 不携带 `plugin_id`；其余操作码自动携带。
+- 主动消息清空 `msg_id`，但保留 `event_id`。
+- 参数中不能包含协议分隔符。
+- C 壳在 Bee 进程内调用 `robot.api`；Go worker 不直接使用函数地址。
+- Bee 入站 GBK 参数由 C 壳 Base64 封装，worker 解码为 UTF-8。
+- Go 出站 UTF-8 命令由 C 壳转换为 GBK；GBK 不可表示字符由 SDK编码为 UTF-16 `\uXXXX`。
+
+## 1～72 操作码
+
+| 操作码 | Go 常量 | 功能 |
+|---:|---|---|
+| 1 | `OpLog` | 输出日志 |
+| 2 | `OpSendChannelMessage` | 发送频道消息 |
+| 3 | `OpSendChannelDM` | 发送频道私信 |
+| 4 | `OpListGuilds` | 取频道列表 |
+| 5 | `OpGetGuild` | 取频道详细信息 |
+| 6 | `OpListChannels` | 取子频道列表 |
+| 7 | `OpGetChannel` | 取子频道详细信息 |
+| 8 | `OpCreateChannel` | 创建子频道 |
+| 9 | `OpGetChannelOnlineCount` | 取子频道在线人数 |
+| 10 | `OpGetGuildMember` | 取频道成员详细 |
+| 11 | `OpUpdateChannel` | 修改子频道 |
+| 12 | `OpDeleteChannel` | 删除子频道 |
+| 13 | `OpDeleteGuildMember` | 删除频道成员 |
+| 14 | `OpListGuildRoles` | 取频道身份组列表 |
+| 15 | `OpCreateGuildRole` | 创建频道身份组 |
+| 16 | `OpUpdateGuildRole` | 修改频道身份组 |
+| 17 | `OpIsGuildOwner` | 取是否频道主 |
+| 18 | `OpIsGuildAdmin` | 取是否频道管理员 |
+| 19 | `OpIsChannelAdmin` | 取是否子频道管理员 |
+| 20 | `OpHasGuildRole` | 取是否指定频道身份组 |
+| 21 | `OpDeleteGuildRole` | 删除频道身份组 |
+| 22 | `OpAddGuildMemberRole` | 添加频道成员到身份组 |
+| 23 | `OpRemoveGuildMemberRole` | 从身份组删除频道成员 |
+| 24 | `OpRecallChannelMessage` | 撤回频道消息 |
+| 25 | `OpSendChannelReply` | 发送频道引用消息 |
+| 26 | `OpSendChannelTextCard` | 发送频道文字卡片 |
+| 27 | `OpSendChannelCustom` | 发送频道自定义消息 |
+| 28 | `OpSendChannelLargeCard` | 发送频道大图卡片 |
+| 29 | `OpMuteGuildMember` | 频道成员禁言 |
+| 30 | `OpMuteGuild` | 频道全员禁言 |
+| 31 | `OpGetRobotID` | 取机器人 ID |
+| 32 | `OpGetRobotInfo` | 取机器人信息 |
+| 33 | `OpSendAdaptiveMessage` | 发送自适应消息 |
+| 34 | `OpSendGroupMessage` | 发送群消息 |
+| 35 | `OpSendGroupVideo` | 发送群视频 |
+| 36 | `OpSendGroupAudio` | 发送群语音 |
+| 37 | `OpGetFrameworkInfo` | 取框架信息 |
+| 38 | `OpSendGroupMarkdown` | 发送群 Markdown |
+| 39 | `OpSendGroupTextCard` | 发送群文字卡片 |
+| 40 | `OpGetQQNickname` | 取 QQ 昵称 |
+| 41 | `OpSendGroupLargeCard` | 发送群大图卡片 |
+| 42 | `OpSendAdaptiveLargeCard` | 发送自适应大图卡片 |
+| 43 | `OpSendGroupThumbnailCard` | 发送群缩略图卡片 |
+| 44 | `OpSendChannelThumbnailCard` | 发送频道缩略图卡片 |
+| 45 | `OpUploadImage` | 上传图片到图床 |
+| 46 | `OpRespondButton` | 响应按钮事件 |
+| 47 | `OpSendChannelMarkdown` | 发送频道 Markdown |
+| 48 | `OpGetRobotAppID` | 取机器人 AppID |
+| 49 | `OpGetAvatar` | 取用户头像 |
+| 50 | `OpGetQQAvatar` | 取 QQ 头像 |
+| 51 | `OpRecallGroupMessage` | 撤回群消息 |
+| 52 | `OpSendFriendMessage` | 发送好友消息 |
+| 53 | `OpSendFriendVideo` | 发送好友视频 |
+| 54 | `OpSendFriendAudio` | 发送好友语音 |
+| 55 | `OpSendFriendMarkdown` | 发送好友 Markdown |
+| 56 | `OpSendFriendTextCard` | 发送好友文字卡片 |
+| 57 | `OpSendFriendLargeCard` | 发送好友大图卡片 |
+| 58 | `OpSendFriendThumbnailCard` | 发送好友缩略图卡片 |
+| 59 | `OpRecallFriendMessage` | 撤回好友消息 |
+| 60 | `OpSendAdaptivePrivateMessage` | 发送自适应私信消息 |
+| 61 | `OpAddChannelReaction` | 添加频道表情表态 |
+| 62 | `OpDeleteChannelReaction` | 删除频道表情表态 |
+| 63 | `OpListChannelReactionUsers` | 取表情表态用户列表 |
+| 64 | `OpGetRobotStats` | 取机器人统计信息 |
+| 65 | `OpSendGroupButton` | 发送群按钮消息 |
+| 66 | `OpSendFriendButton` | 发送好友按钮消息 |
+| 67 | `OpGetRobotToken` | 取机器人 Token |
+| 68 | `OpGetRobotSecret` | 取机器人密钥 |
+| 69 | `OpSendGroupFile` | 发送群文件 |
+| 70 | `OpSendFriendFile` | 发送好友文件 |
+| 71 | `OpSendGroupReply` | 发送群引用消息 |
+| 72 | `OpSendFriendReply` | 发送好友引用消息 |
+
+各方法完整参数签名和类型定义直接查看根目录 `bee_sdk.go`。该文件是 SDK 的单一实现源，不拆分为大量小文件。
