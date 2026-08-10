@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 )
 
 type HTTPServiceStatus struct {
@@ -18,6 +21,31 @@ type HTTPServiceStatus struct {
 	Config  AIConfig `json:"config"`
 	Error   string   `json:"error,omitempty"`
 }
+
+type proxyCheckTarget struct {
+	Name string
+	URL  string
+}
+
+type ProxyCheckResult struct {
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	OK        bool   `json:"ok"`
+	LatencyMS int64  `json:"latency_ms"`
+	Error     string `json:"error,omitempty"`
+}
+
+type ProxyCheckResponse struct {
+	ProxyAddress string             `json:"proxy_address"`
+	Results      []ProxyCheckResult `json:"results"`
+}
+
+var proxyCheckTargets = []proxyCheckTarget{
+	{Name: "Google", URL: "https://www.google.com/generate_204"},
+	{Name: "Baidu", URL: "https://www.baidu.com/"},
+}
+
+const proxyCheckTimeout = 8 * time.Second
 
 type HTTPService struct {
 	mu         sync.Mutex
@@ -43,6 +71,7 @@ func (s *HTTPService) Handler() http.Handler {
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/models", s.handleModels)
+	mux.HandleFunc("/api/proxy-check", s.handleProxyCheck)
 	return mux
 }
 
@@ -182,6 +211,76 @@ func (s *HTTPService) handleModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string][]string{"models": models})
 }
 
+func (s *HTTPService) handleProxyCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	cfg, err := LoadAIConfig(s.configPath)
+	if err != nil {
+		cfg = DefaultAIConfig()
+	}
+	s.client.ConfigureProxy(cfg.ProxyAddress)
+	results := checkProxyTargets(r.Context(), s.client, proxyCheckTargets)
+	writeJSON(w, ProxyCheckResponse{
+		ProxyAddress: cfg.ProxyAddress,
+		Results:      results,
+	})
+}
+
+func checkProxyTargets(ctx context.Context, client *AIClient, targets []proxyCheckTarget) []ProxyCheckResult {
+	results := make([]ProxyCheckResult, len(targets))
+	var wg sync.WaitGroup
+	for i, target := range targets {
+		wg.Add(1)
+		go func(index int, target proxyCheckTarget) {
+			defer wg.Done()
+			results[index] = probeProxyTarget(ctx, client, target)
+		}(i, target)
+	}
+	wg.Wait()
+	return results
+}
+
+func probeProxyTarget(ctx context.Context, client *AIClient, target proxyCheckTarget) ProxyCheckResult {
+	result := ProxyCheckResult{Name: target.Name, URL: target.URL}
+	if client == nil {
+		result.Error = "HTTP客户端未初始化"
+		return result
+	}
+	if strings.TrimSpace(target.URL) == "" {
+		result.Error = "检测地址无效"
+		return result
+	}
+	httpClient := client.httpClient()
+	if httpClient == nil {
+		result.Error = "HTTP客户端未初始化"
+		return result
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, proxyCheckTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, target.URL, nil)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	start := time.Now()
+	resp, err := httpClient.Do(req)
+	result.LatencyMS = time.Since(start).Milliseconds()
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		result.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		return result
+	}
+	result.OK = true
+	return result
+}
+
 func IsPortAvailable(port int) bool {
 	if port <= 0 || port > 65535 {
 		return false
@@ -222,9 +321,12 @@ textarea{min-height:140px;resize:vertical}
 .row{display:flex;gap:16px;align-items:center;margin:14px 0}
 .row label{font-weight:400;margin:0}
 .row input{width:auto}
+.proxy-row{display:flex;gap:12px;align-items:center;margin:14px 0}
+.proxy-row input{flex:1}
 button{font:inherit;padding:8px 14px;border:1px solid #8a929d;background:#f7f7f7;border-radius:4px;cursor:pointer}
 button.primary{background:#1a73e8;border-color:#1a73e8;color:#fff}
 #status{margin:12px 0;color:#3367d6}
+#proxyResults{margin:12px 0;padding:10px;border:1px solid #c8cdd4;border-radius:4px;background:#fafafa;min-height:24px;white-space:pre-line}
 </style>
 </head>
 <body>
@@ -240,7 +342,11 @@ button.primary{background:#1a73e8;border-color:#1a73e8;color:#fff}
 <label for="limit">对话上限</label>
 <input id="limit" type="number" min="4">
 <label for="proxy">SOCKS5代理</label>
+<div class="proxy-row">
 <input id="proxy" placeholder="127.0.0.1:1080">
+<button type="button" id="checkProxy">检测代理</button>
+</div>
+<div id="proxyResults" aria-live="polite"></div>
 <label for="triggerMode">群聊触发方式</label>
 <select id="triggerMode">
 <option value="prefix">前缀触发</option>
@@ -256,6 +362,16 @@ button.primary{background:#1a73e8;border-color:#1a73e8;color:#fff}
 </main>
 <script>
 function showMessage(text){message.textContent=text;}
+function buildPayload(){
+ return {port:0,model:model.value,system_prompt:system.value,conversation_limit:Number(limit.value),proxy_address:proxy.value,public_prefix:prefix.value,public_trigger_mode:triggerMode.value,enable_friend:friend.checked,enable_group:group.checked};
+}
+function renderProxyResults(results){
+ if(!results || !results.length){
+  proxyResults.textContent='未获取到检测结果';
+  return;
+ }
+ proxyResults.textContent=results.map(v=>v.name+'：'+(v.ok?'可用':'失败')+'，'+(v.latency_ms||0)+'ms'+(v.error?'，'+v.error:'')).join('\n');
+}
 async function loadStatus(doneText){
  try{
   const r=await fetch('/api/status');
@@ -292,20 +408,43 @@ loadModels.onclick=async()=>{
  }
 };
 models.onchange=()=>{model.value=models.value};
-save.onclick=async()=>{
+async function saveConfig(silent){
  try{
-  const payload={port:0,model:model.value,system_prompt:system.value,conversation_limit:Number(limit.value),proxy_address:proxy.value,public_prefix:prefix.value,public_trigger_mode:triggerMode.value,enable_friend:friend.checked,enable_group:group.checked};
+  const payload=buildPayload();
   const s=await (await fetch('/api/status')).json();
   payload.port=s.config.port;
   const r=await fetch('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
   if(!r.ok) throw new Error(await r.text());
-  const text='配置已保存';
-  showMessage(text);
-  alert(text);
-  await loadStatus(text);
+  if(!silent){
+   const text='配置已保存';
+   showMessage(text);
+   alert(text);
+  }
+  await loadStatus('配置已保存');
  }catch(e){
   const text='保存失败：'+e.message;
   showMessage(text);
+  if(!silent){
+   alert(text);
+  }
+  throw e;
+ }
+}
+save.onclick=async()=>{ await saveConfig(false); };
+checkProxy.onclick=async()=>{
+ try{
+  showMessage('正在检测代理...');
+  proxyResults.textContent='正在检测代理...';
+  await saveConfig(true);
+  const r=await fetch('/api/proxy-check');
+  if(!r.ok) throw new Error(await r.text());
+  const data=await r.json();
+  renderProxyResults(data.results||[]);
+  showMessage('代理检测完成');
+ }catch(e){
+  const text='代理检测失败：'+e.message;
+  showMessage(text);
+  proxyResults.textContent=text;
   alert(text);
  }
 };
