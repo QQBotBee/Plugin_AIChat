@@ -61,7 +61,9 @@ const (
 	wmCreate         = 0x0001
 	wmDestroy        = 0x0002
 	wmClose          = 0x0010
+	wmEraseBkgnd     = 0x0014
 	wmCommand        = 0x0111
+	wmCtlColorDlg    = 0x0136
 	wmCtlColorEdit   = 0x0133
 	wmCtlColorBtn    = 0x0135
 	wmCtlColorStatic = 0x0138
@@ -105,6 +107,7 @@ var (
 	user32                  = syscall.NewLazyDLL("user32.dll")
 	gdi32                   = syscall.NewLazyDLL("gdi32.dll")
 	shell32                 = syscall.NewLazyDLL("shell32.dll")
+	uxtheme                 = syscall.NewLazyDLL("uxtheme.dll")
 	procRegisterClassExW    = user32.NewProc("RegisterClassExW")
 	procUnregisterClassW    = user32.NewProc("UnregisterClassW")
 	procDestroyWindow       = user32.NewProc("DestroyWindow")
@@ -134,6 +137,7 @@ var (
 	procGetDeviceCaps       = gdi32.NewProc("GetDeviceCaps")
 	procSetTextColor        = gdi32.NewProc("SetTextColor")
 	procSetBkColor          = gdi32.NewProc("SetBkColor")
+	procSetWindowTheme      = uxtheme.NewProc("SetWindowTheme")
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	openProcess             = kernel32.NewProc("OpenProcess")
 	waitSingleObject        = kernel32.NewProc("WaitForSingleObject")
@@ -291,10 +295,12 @@ func settingsWindowProc(hwnd uintptr, message uint32, wparam, lparam uintptr) ui
 		createSettingsControls(hwnd)
 		refreshSettingsControls()
 		return 0
+	case wmEraseBkgnd:
+		return 1
 	case wmCommand:
 		handleSettingsCommand(wparam)
 		return 0
-	case wmCtlColorStatic, wmCtlColorEdit, wmCtlColorBtn:
+	case wmCtlColorDlg, wmCtlColorStatic, wmCtlColorEdit, wmCtlColorBtn:
 		return whiteControlBrush(wparam)
 	case wmClose:
 		procDestroyWindow.Call(hwnd)
@@ -312,6 +318,15 @@ func whiteControlBrush(hdc uintptr) uintptr {
 	procSetBkColor.Call(hdc, colorWhite)
 	brush, _, _ := procGetSysColorBrush.Call(colorWindow)
 	return brush
+}
+
+func applyWhiteTheme(hwnds ...uintptr) {
+	empty, _ := syscall.UTF16PtrFromString("")
+	for _, hwnd := range hwnds {
+		if hwnd != 0 {
+			procSetWindowTheme.Call(hwnd, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))
+		}
+	}
 }
 
 func createSettingsControls(hwnd uintptr) {
@@ -334,6 +349,7 @@ func createSettingsControls(hwnd uintptr) {
 	settingsNative.Lock()
 	settingsNative.controls = settingsControls{statusLabel: status, portEdit: portEdit, portState: portState, startButton: startButton, stopButton: stopButton, openButton: openButton}
 	settingsNative.Unlock()
+	applyWhiteTheme(status, portEdit, portState, startButton, stopButton, openButton)
 }
 
 func createChild(parent uintptr, className, text string, style, exStyle uintptr, x, y, width, height, id int) uintptr {
