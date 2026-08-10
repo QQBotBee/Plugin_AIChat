@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,6 +28,7 @@ type ChatMessage struct {
 
 type AIClient struct {
 	baseURL string
+	mu      sync.RWMutex
 	http    *http.Client
 }
 
@@ -40,13 +43,26 @@ func NewAIClient(baseURL string, httpClient *http.Client) *AIClient {
 	return &AIClient{baseURL: baseURL, http: httpClient}
 }
 
+func NewAIClientWithProxy(baseURL, proxyAddress string) *AIClient {
+	return NewAIClient(baseURL, newAIHTTPClient(proxyAddress))
+}
+
+func (c *AIClient) ConfigureProxy(proxyAddress string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.http = newAIHTTPClient(proxyAddress)
+	c.mu.Unlock()
+}
+
 func (c *AIClient) ListFreeModels(ctx context.Context) ([]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
 	if err != nil {
 		return nil, err
 	}
 	addOpenCodeHeaders(req)
-	resp, err := c.http.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +113,7 @@ func (c *AIClient) Chat(ctx context.Context, model string, messages []ChatMessag
 	}
 	req.Header.Set("Content-Type", "application/json")
 	addOpenCodeHeaders(req)
-	resp, err := c.http.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return ChatMessage{}, fmt.Errorf("%w: %v", ErrAIUnavailable, err)
 	}
@@ -122,6 +138,24 @@ func (c *AIClient) Chat(ctx context.Context, model string, messages []ChatMessag
 		reply.Role = "assistant"
 	}
 	return reply, nil
+}
+
+func (c *AIClient) httpClient() *http.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.http
+}
+
+func newAIHTTPClient(proxyAddress string) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	proxyAddress = strings.TrimSpace(proxyAddress)
+	if proxyAddress != "" {
+		proxyURL, err := url.Parse("socks5://" + proxyAddress)
+		if err == nil && proxyURL.Host != "" {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+	return &http.Client{Timeout: 60 * time.Second, Transport: transport}
 }
 
 func addOpenCodeHeaders(req *http.Request) {

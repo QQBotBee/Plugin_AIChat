@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -52,12 +51,32 @@ func (s *SessionStore) Save(key string, messages []ChatMessage) error {
 }
 
 func (s *SessionStore) path(key string) string {
-	name := base64.RawURLEncoding.EncodeToString([]byte(key)) + ".json"
+	name := sessionFilename(key)
 	return filepath.Join(s.root, name)
 }
 
-func SessionKey(kind, sourceID, userID string) string {
-	return kind + "/" + sourceID + "/" + userID
+func SessionKey(userID string) string {
+	return strings.TrimSpace(userID)
+}
+
+func sessionFilename(userID string) string {
+	name := strings.TrimSpace(userID)
+	replacer := strings.NewReplacer(
+		`<`, "_",
+		`>`, "_",
+		`:`, "_",
+		`"`, "_",
+		`/`, "_",
+		`\`, "_",
+		`|`, "_",
+		`?`, "_",
+		`*`, "_",
+	)
+	name = replacer.Replace(name)
+	if name == "" {
+		name = "unknown"
+	}
+	return name + ".json"
 }
 
 func BuildMessagesForTurn(ctx context.Context, client chatCompleter, cfg AIConfig, history []ChatMessage, userInput string) ([]ChatMessage, error) {

@@ -14,18 +14,23 @@ const (
 	minConversationLimit     = 4
 )
 
-const defaultSystemPrompt = `你的名字：小猪猪
-回复要求：始终以调皮可爱的小猪猪口吻进行对话。绝对禁止使用任何Markdown语法。这意味着你的回复中严禁出现双星号（用于加粗）、井号（用于标题）、反引号（用于代码块）等任何格式化符号。仅允许使用纯文字、emoji表情、特殊符号（可用于列表等特殊场景）。如果需要分段，请直接使用换行符，不要使用任何引导符。这是一个硬性约束，任何Markdown符号的出现都视为任务失败。`
+const (
+	PublicTriggerPrefix  = "prefix"
+	PublicTriggerMention = "mention"
+)
+
+const defaultSystemPrompt = "你的名字：小猪猪。回复要求：始终以调皮可爱的小猪猪口吻进行对话。"
 
 type AIConfig struct {
 	Port              int    `json:"port"`
 	Model             string `json:"model"`
 	SystemPrompt      string `json:"system_prompt"`
 	ConversationLimit int    `json:"conversation_limit"`
+	ProxyAddress      string `json:"proxy_address"`
 	PublicPrefix      string `json:"public_prefix"`
+	PublicTriggerMode string `json:"public_trigger_mode"`
 	EnableFriend      bool   `json:"enable_friend"`
 	EnableGroup       bool   `json:"enable_group"`
-	EnableChannel     bool   `json:"enable_channel"`
 }
 
 func DefaultAIConfig() AIConfig {
@@ -34,15 +39,16 @@ func DefaultAIConfig() AIConfig {
 		SystemPrompt:      defaultSystemPrompt,
 		ConversationLimit: defaultConversationLimit,
 		PublicPrefix:      "#",
+		PublicTriggerMode: PublicTriggerPrefix,
 		EnableFriend:      true,
 		EnableGroup:       true,
-		EnableChannel:     true,
 	}
 }
 
 func NormalizeAIConfig(cfg AIConfig) AIConfig {
 	cfg.Model = strings.TrimSpace(cfg.Model)
 	cfg.SystemPrompt = strings.TrimSpace(cfg.SystemPrompt)
+	cfg.ProxyAddress = strings.TrimSpace(cfg.ProxyAddress)
 	if cfg.Port <= 0 || cfg.Port > 65535 {
 		cfg.Port = defaultHTTPPort
 	}
@@ -52,6 +58,10 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 	cfg.PublicPrefix = strings.TrimSpace(cfg.PublicPrefix)
 	if cfg.PublicPrefix == "" {
 		cfg.PublicPrefix = "#"
+	}
+	cfg.PublicTriggerMode = strings.TrimSpace(cfg.PublicTriggerMode)
+	if cfg.PublicTriggerMode != PublicTriggerMention {
+		cfg.PublicTriggerMode = PublicTriggerPrefix
 	}
 	if cfg.ConversationLimit <= 0 {
 		cfg.ConversationLimit = defaultConversationLimit

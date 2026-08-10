@@ -49,6 +49,22 @@ func handleRuntimeAIChat(target ChatTarget, message string, send func(MarkdownMe
 	return service.Handle(ctx, target, message, send)
 }
 
+func ensureRuntimeChatServices(bee *BeeAPI) {
+	if currentChatService() != nil {
+		return
+	}
+	if bee == nil {
+		return
+	}
+	dataDir, err := bee.GetAppDataDir()
+	if err != nil {
+		return
+	}
+	ensurePluginServices(dataDir, func(text string) {
+		_ = bee.Log(text)
+	})
+}
+
 // onInitialize 是插件真正的初始化入口，在 Bee_初始化返回插件信息之前调用一次。
 // 适合创建数据目录、读取配置和准备基础资源；不要在这里启动仅启用期间运行的长期任务。
 func onInitialize(args [][]byte) {
@@ -62,28 +78,21 @@ func onInitialize(args [][]byte) {
 			_ = bee.Log(text)
 		})
 	}
-	_ = bee.Log("插件初始化完成")
 	// dataDir, err := bee.GetAppDataDir()
 	// 可在 dataDir 中创建配置、数据库、缓存和日志文件。
 }
 
 // onEnable 在插件被启用时调用，可在这里启动插件任务或初始化运行状态。
 func onEnable(args [][]byte) {
-	bee, err := beeFromArgs(args)
-	if err == nil {
-		_ = bee.Log("插件被启用")
-		// dataDir, err := bee.GetAppDataDir()
-		// 应用配置、数据库、缓存和日志统一写入 dataDir。
-	}
+	_ = args
+	// dataDir, err := bee.GetAppDataDir()
+	// 应用配置、数据库、缓存和日志统一写入 dataDir。
 }
 
 // onDisable 在插件被禁用时调用，负责停止任务并关闭设置窗口等运行资源。
 func onDisable(args [][]byte) {
+	_ = args
 	StopPluginHTTPService()
-	bee, err := beeFromArgs(args)
-	if err == nil {
-		_ = bee.Log("插件被禁用")
-	}
 	closeSettingsWindow()
 }
 
@@ -91,19 +100,13 @@ func onDisable(args [][]byte) {
 // robotJSON 是卸载回调传入的机器人上下文，可用于输出日志等框架级操作。
 // Bee 只允许禁用后卸载，设置窗口已在 onDisable 中关闭，这里不重复处理窗口。
 func onUnload(args [][]byte) {
+	_ = args
 	StopPluginHTTPService()
-	bee, err := beeFromArgs(args)
-	if err == nil {
-		_ = bee.Log("插件被卸载")
-	}
 }
 
 // onSettings 在用户点击“设置”时调用，用于打开或聚焦插件设置窗口。
 func onSettings(args [][]byte) {
-	bee, err := beeFromArgs(args)
-	if err == nil {
-		_ = bee.Log("插件设置被打开")
-	}
+	_ = args
 	showSettingsWindow()
 }
 
@@ -118,18 +121,11 @@ func onChannelPrivate(
 	message string, // 收到的频道私信内容
 	messageID string, // 消息 ID，用于撤回、引用等上下文相关 API
 ) int {
-	bee, err := NewBeeAPI(robotJSON)
-	if err != nil {
-		return MessageContinue
-	}
-
-	_ = bee.Log("收到频道私信消息")
-
 	// 示例：向当前频道私信会话发送消息。
 	// _, _ = bee.ChannelDM(channelID).SendText("你好哦")
 	//
 	// 这些具名参数可直接用于业务判断、回复、引用或撤回操作。
-	_, _, _, _, _ = channelID, subChannelID, userID, message, messageID
+	_, _, _, _, _, _ = robotJSON, channelID, subChannelID, userID, message, messageID
 
 	return MessageContinue
 }
@@ -145,24 +141,11 @@ func onChannelMessage(
 	message string, // 收到的频道消息内容
 	messageID string, // 消息 ID，用于撤回、引用等上下文相关 API
 ) int {
-	bee, err := NewBeeAPI(robotJSON)
-	if err != nil {
-		return MessageContinue
-	}
-
-	_ = bee.Log("收到频道消息")
-	if handleRuntimeAIChat(ChatTarget{Kind: ChatTargetChannel, SourceID: subChannelID, UserID: userID}, message, func(markdown MarkdownMessage) error {
-		_, err := bee.ctx.SendChannelMarkdown(subChannelID, markdown, false)
-		return err
-	}) {
-		return MessageContinue
-	}
-
 	// 示例：向消息来源子频道发送消息。
 	// _, _ = bee.Channel(subChannelID).SendText("你好哦")
 	//
 	// 这些具名参数可直接用于业务判断、回复、引用或撤回操作。
-	_, _, _, _, _ = channelID, subChannelID, userID, message, messageID
+	_, _, _, _, _, _ = robotJSON, channelID, subChannelID, userID, message, messageID
 
 	return MessageContinue
 }
@@ -179,13 +162,6 @@ func onChannelEvent(
 	eventType string, // 事件类型，对应 bee_sdk.go 中的频道 EventType 常量
 	rawMessage string, // 事件原始内容，保留 Bee 框架传入的完整事件数据
 ) int {
-	bee, err := NewBeeAPI(robotJSON)
-	if err != nil {
-		return MessageContinue
-	}
-
-	_ = bee.Log("收到频道事件")
-
 	switch EventType(eventType) {
 	case EventGuildMemberRemove:
 		// 当成员被移除时
@@ -259,7 +235,7 @@ func onChannelEvent(
 	}
 
 	// 这些具名参数可直接用于判断事件来源、触发人、操作人和原始内容。
-	_, _, _, _, _ = channelID, subChannelID, userID, operatorID, rawMessage
+	_, _, _, _, _, _ = robotJSON, channelID, subChannelID, userID, operatorID, rawMessage
 
 	return MessageContinue
 }
@@ -278,7 +254,7 @@ func onPrivateMessage(
 		return MessageContinue
 	}
 
-	_ = bee.Log("收到好友私聊消息")
+	ensureRuntimeChatServices(bee)
 	if handleRuntimeAIChat(ChatTarget{Kind: ChatTargetFriend, SourceID: friendID, UserID: friendID}, message, func(markdown MarkdownMessage) error {
 		_, err := bee.ctx.SendFriendMarkdown(friendID, markdown, false, false)
 		return err
@@ -310,8 +286,8 @@ func onGroupMessage(
 		return MessageContinue
 	}
 
-	_ = bee.Log("收到群消息")
-	if handleRuntimeAIChat(ChatTarget{Kind: ChatTargetGroup, SourceID: groupID, UserID: userID}, message, func(markdown MarkdownMessage) error {
+	ensureRuntimeChatServices(bee)
+	if handleRuntimeAIChat(ChatTarget{Kind: ChatTargetGroup, SourceID: groupID, UserID: userID, RobotJSON: robotJSON}, message, func(markdown MarkdownMessage) error {
 		_, err := bee.ctx.SendGroupMarkdown(groupID, markdown, false)
 		return err
 	}) {
@@ -338,13 +314,6 @@ func onCommonEvent(
 	eventType string, // 事件类型，对应 bee_sdk.go 中的 EventType 常量
 	rawMessage string, // 事件原始内容，保留 Bee 框架传入的完整事件数据
 ) int {
-	bee, err := NewBeeAPI(robotJSON)
-	if err != nil {
-		return MessageContinue
-	}
-
-	_ = bee.Log("收到通用事件")
-
 	switch EventType(eventType) {
 	case EventInteractionCreate:
 		// 按钮事件
@@ -385,7 +354,7 @@ func onCommonEvent(
 	}
 
 	// 这些具名参数可直接用于判断事件来源、触发人、操作人和原始内容。
-	_, _, _, _, _ = sourceID, userID, operatorID, eventType, rawMessage
+	_, _, _, _, _, _ = robotJSON, sourceID, userID, operatorID, eventType, rawMessage
 
 	return MessageContinue
 }

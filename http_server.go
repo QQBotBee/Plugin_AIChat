@@ -30,10 +30,10 @@ type HTTPService struct {
 }
 
 func NewHTTPService(configPath string, client *AIClient) *HTTPService {
-	if client == nil {
-		client = NewAIClient("", nil)
-	}
 	cfg, _ := LoadAIConfig(configPath)
+	if client == nil {
+		client = NewAIClientWithProxy("", cfg.ProxyAddress)
+	}
 	return &HTTPService{configPath: configPath, client: client, port: cfg.Port}
 }
 
@@ -154,6 +154,7 @@ func (s *HTTPService) handleConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		s.client.ConfigureProxy(cfg.ProxyAddress)
 		s.mu.Lock()
 		if s.server == nil {
 			s.port = cfg.Port
@@ -169,6 +170,9 @@ func (s *HTTPService) handleModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+	if cfg, err := LoadAIConfig(s.configPath); err == nil {
+		s.client.ConfigureProxy(cfg.ProxyAddress)
 	}
 	models, err := s.client.ListFreeModels(r.Context())
 	if err != nil {
@@ -235,12 +239,18 @@ button.primary{background:#1a73e8;border-color:#1a73e8;color:#fff}
 <textarea id="system"></textarea>
 <label for="limit">对话上限</label>
 <input id="limit" type="number" min="4">
-<label for="prefix">群聊/频道公共前缀</label>
+<label for="proxy">SOCKS5代理</label>
+<input id="proxy" placeholder="127.0.0.1:1080">
+<label for="triggerMode">群聊触发方式</label>
+<select id="triggerMode">
+<option value="prefix">前缀触发</option>
+<option value="mention">艾特触发</option>
+</select>
+<label for="prefix">群聊公共前缀</label>
 <input id="prefix" placeholder="#">
 <div class="row">
 <label><input id="friend" type="checkbox"> 好友</label>
 <label><input id="group" type="checkbox"> 群聊</label>
-<label><input id="channel" type="checkbox"> 频道消息</label>
 </div>
 <button class="primary" type="button" id="save">保存配置</button>
 </main>
@@ -255,10 +265,11 @@ async function loadStatus(doneText){
   model.value=c.model||'';
   system.value=c.system_prompt||'';
   limit.value=c.conversation_limit||80;
+  proxy.value=c.proxy_address||'';
+  triggerMode.value=c.public_trigger_mode||'prefix';
   prefix.value=c.public_prefix||'#';
   friend.checked=!!c.enable_friend;
   group.checked=!!c.enable_group;
-  channel.checked=!!c.enable_channel;
   showMessage(doneText||'配置已加载');
  }catch(e){
   showMessage('读取配置失败：'+e.message);
@@ -283,7 +294,7 @@ loadModels.onclick=async()=>{
 models.onchange=()=>{model.value=models.value};
 save.onclick=async()=>{
  try{
-  const payload={port:0,model:model.value,system_prompt:system.value,conversation_limit:Number(limit.value),public_prefix:prefix.value,enable_friend:friend.checked,enable_group:group.checked,enable_channel:channel.checked};
+  const payload={port:0,model:model.value,system_prompt:system.value,conversation_limit:Number(limit.value),proxy_address:proxy.value,public_prefix:prefix.value,public_trigger_mode:triggerMode.value,enable_friend:friend.checked,enable_group:group.checked};
   const s=await (await fetch('/api/status')).json();
   payload.port=s.config.port;
   const r=await fetch('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});

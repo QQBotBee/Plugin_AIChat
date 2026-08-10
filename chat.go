@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,15 +12,15 @@ import (
 )
 
 const (
-	ChatTargetFriend  = "friend"
-	ChatTargetGroup   = "group"
-	ChatTargetChannel = "channel"
+	ChatTargetFriend = "friend"
+	ChatTargetGroup  = "group"
 )
 
 type ChatTarget struct {
-	Kind     string
-	SourceID string
-	UserID   string
+	Kind      string
+	SourceID  string
+	UserID    string
+	RobotJSON string
 }
 
 type ChatService struct {
@@ -64,15 +65,24 @@ func (s *ChatService) Handle(ctx context.Context, target ChatTarget, message str
 	if !target.enabled(cfg) {
 		return false
 	}
-	prefix := cfg.PublicPrefix
-	if target.Kind == ChatTargetFriend {
-		prefix = ""
+	input := ""
+	ok := false
+	switch target.Kind {
+	case ChatTargetFriend:
+		input, ok = ParseAIInput(message, "")
+	case ChatTargetGroup:
+		if cfg.PublicTriggerMode == PublicTriggerMention {
+			input, ok = ParseMentionAIInput(target.RobotJSON, message)
+		} else {
+			input, ok = ParseAIInput(message, cfg.PublicPrefix)
+		}
+	default:
+		return false
 	}
-	input, ok := ParseAIInput(message, prefix)
 	if !ok {
 		return false
 	}
-	sessionKey := SessionKey(target.Kind, target.SourceID, target.UserID)
+	sessionKey := SessionKey(target.UserID)
 	history, err := s.sessions.Load(sessionKey)
 	if err != nil {
 		s.logError("读取AI会话失败: " + err.Error())
@@ -101,6 +111,58 @@ func (s *ChatService) Handle(ctx context.Context, target ChatTarget, message str
 	return true
 }
 
+func ParseMentionAIInput(robotJSON, message string) (string, bool) {
+	mentioned, ids := mentionedSelf(robotJSON)
+	if !mentioned {
+		return "", false
+	}
+	input := strings.TrimSpace(message)
+	for _, id := range ids {
+		input = strings.ReplaceAll(input, "<@"+id+">", "")
+		input = strings.ReplaceAll(input, "<@!"+id+">", "")
+	}
+	input = strings.TrimSpace(input)
+	return input, input != ""
+}
+
+func mentionedSelf(robotJSON string) (bool, []string) {
+	var ctx struct {
+		Raw json.RawMessage `json:"raw"`
+	}
+	if err := json.Unmarshal([]byte(robotJSON), &ctx); err != nil {
+		return false, nil
+	}
+	raw := ctx.Raw
+	if len(raw) == 0 {
+		raw = []byte(robotJSON)
+	} else {
+		var rawText string
+		if err := json.Unmarshal(raw, &rawText); err == nil {
+			raw = []byte(rawText)
+		}
+	}
+	var event struct {
+		D struct {
+			Mentions []struct {
+				ID    string `json:"id"`
+				IsYou bool   `json:"is_you"`
+			} `json:"mentions"`
+		} `json:"d"`
+	}
+	if err := json.Unmarshal(raw, &event); err != nil {
+		return false, nil
+	}
+	var ids []string
+	for _, mention := range event.D.Mentions {
+		if mention.IsYou {
+			if mention.ID != "" {
+				ids = append(ids, mention.ID)
+			}
+		}
+	}
+	return len(ids) > 0, ids
+}
+
 func (s *ChatService) logError(text string) {
 	if s != nil && s.log != nil {
 		s.log(text)
@@ -113,8 +175,6 @@ func (target ChatTarget) enabled(cfg AIConfig) bool {
 		return cfg.EnableFriend
 	case ChatTargetGroup:
 		return cfg.EnableGroup
-	case ChatTargetChannel:
-		return cfg.EnableChannel
 	default:
 		return false
 	}
@@ -163,7 +223,7 @@ func InitializePluginServices(dataDir string, logger func(string)) {
 	if err == nil {
 		_ = SaveAIConfig(configPath, cfg)
 	}
-	client := NewAIClient("", nil)
+	client := NewAIClientWithProxy("", cfg.ProxyAddress)
 	chat := NewChatService(configPath, NewSessionStore(filepath.Join(dataDir, "sessions")), client)
 	chat.log = logger
 	pluginRuntime.Lock()
