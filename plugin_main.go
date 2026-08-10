@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"time"
 )
 
 const (
@@ -35,6 +37,16 @@ func beeFromArgs(args [][]byte) (*BeeAPI, error) {
 		return nil, errors.New("callback missing robot context")
 	}
 	return NewBeeAPI(string(args[0]))
+}
+
+func handleRuntimeAIChat(target ChatTarget, message string, send func(MarkdownMessage) error) bool {
+	service := currentChatService()
+	if service == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	return service.Handle(ctx, target, message, send)
 }
 
 // onInitialize 是插件真正的初始化入口，在 Bee_初始化返回插件信息之前调用一次。
@@ -131,6 +143,12 @@ func onChannelMessage(
 	}
 
 	_ = bee.Log("收到频道消息")
+	if handleRuntimeAIChat(ChatTarget{Kind: ChatTargetChannel, SourceID: subChannelID, UserID: userID}, message, func(markdown MarkdownMessage) error {
+		_, err := bee.ctx.SendChannelMarkdown(subChannelID, markdown, false)
+		return err
+	}) {
+		return MessageContinue
+	}
 
 	// 示例：向消息来源子频道发送消息。
 	// _, _ = bee.Channel(subChannelID).SendText("你好哦")
@@ -253,6 +271,12 @@ func onPrivateMessage(
 	}
 
 	_ = bee.Log("收到好友私聊消息")
+	if handleRuntimeAIChat(ChatTarget{Kind: ChatTargetFriend, SourceID: friendID, UserID: friendID}, message, func(markdown MarkdownMessage) error {
+		_, err := bee.ctx.SendFriendMarkdown(friendID, markdown, false, false)
+		return err
+	}) {
+		return MessageContinue
+	}
 
 	// 示例：向当前好友发送消息。
 	// _, _ = bee.Friend(friendID).SendText("你好哦")
@@ -279,6 +303,12 @@ func onGroupMessage(
 	}
 
 	_ = bee.Log("收到群消息")
+	if handleRuntimeAIChat(ChatTarget{Kind: ChatTargetGroup, SourceID: groupID, UserID: userID}, message, func(markdown MarkdownMessage) error {
+		_, err := bee.ctx.SendGroupMarkdown(groupID, markdown, false)
+		return err
+	}) {
+		return MessageContinue
+	}
 
 	// 示例：向消息来源群聊发送消息。
 	// _, _ = bee.Group(groupID).SendText("大家好")
