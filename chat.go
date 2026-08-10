@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -124,6 +125,24 @@ func currentHTTPService() *HTTPService {
 	pluginRuntime.RLock()
 	defer pluginRuntime.RUnlock()
 	return pluginRuntime.http
+}
+
+func ensurePluginServices(dataDir string, logger func(string)) {
+	pluginRuntime.RLock()
+	ready := pluginRuntime.chat != nil && pluginRuntime.http != nil
+	pluginRuntime.RUnlock()
+	if ready {
+		return
+	}
+	InitializePluginServices(dataDir, logger)
+}
+
+func pluginDataDir() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(filepath.Dir(executable)), nil
 }
 
 func InitializePluginServices(dataDir string, logger func(string)) {

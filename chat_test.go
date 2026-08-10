@@ -93,3 +93,23 @@ func TestInitializePluginServicesCreatesRuntimeServices(t *testing.T) {
 	}
 	StopPluginHTTPService()
 }
+
+func TestEnsurePluginServicesBootstrapsRuntimeWhenMissing(t *testing.T) {
+	dir := t.TempDir()
+	t.Cleanup(func() {
+		StopPluginHTTPService()
+		pluginRuntime.Lock()
+		pluginRuntime.chat = nil
+		pluginRuntime.http = nil
+		pluginRuntime.Unlock()
+	})
+
+	ensurePluginServices(dir, nil)
+
+	if currentChatService() == nil {
+		t.Fatal("currentChatService() = nil, want initialized service")
+	}
+	if currentHTTPService() == nil {
+		t.Fatal("currentHTTPService() = nil, want initialized service")
+	}
+}

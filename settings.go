@@ -404,8 +404,14 @@ func updatePortState() {
 func startSettingsHTTP() {
 	service := currentHTTPService()
 	if service == nil {
-		setStatusText("HTTP服务：插件尚未初始化")
-		return
+		if dataDir, err := pluginDataDir(); err == nil {
+			ensurePluginServices(dataDir, nil)
+			service = currentHTTPService()
+		}
+		if service == nil {
+			setStatusText("HTTP服务：初始化失败")
+			return
+		}
 	}
 	port, ok := readPortEdit()
 	if !ok {

@@ -58,7 +58,7 @@ func onInitialize(args [][]byte) {
 	}
 	dataDir, err := bee.GetAppDataDir()
 	if err == nil {
-		InitializePluginServices(dataDir, func(text string) {
+		ensurePluginServices(dataDir, func(text string) {
 			_ = bee.Log(text)
 		})
 	}
