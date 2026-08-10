@@ -16,6 +16,3 @@
 .vscode/
 .idea/
 *.swp
-
-# Local test files
-*_test.go
