@@ -3,33 +3,28 @@
 package main
 
 import (
+	"context"
 	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
 const (
-	settingsBaseWidth       = 640
-	settingsBaseHeight      = 420
-	settingsBasePadding     = 24
-	settingsBaseTitleHeight = 48
+	settingsBaseWidth   = 560
+	settingsBaseHeight  = 260
+	settingsBasePadding = 18
 )
 
 type settingsLayout struct {
 	ClientWidth  int
 	ClientHeight int
 	Padding      int
-	TitleHeight  int
 	Resizable    bool
 	Maximizable  bool
-}
-
-type settingsModel struct {
-	Title       string
-	Description string
-	Status      string
 }
 
 func scaleDPI(value, dpi int) int {
@@ -44,7 +39,6 @@ func defaultSettingsLayout(dpi int) settingsLayout {
 		ClientWidth:  scaleDPI(settingsBaseWidth, dpi),
 		ClientHeight: scaleDPI(settingsBaseHeight, dpi),
 		Padding:      scaleDPI(settingsBasePadding, dpi),
-		TitleHeight:  scaleDPI(settingsBaseTitleHeight, dpi),
 		Resizable:    false,
 		Maximizable:  false,
 	}
@@ -62,48 +56,42 @@ func centeredPosition(screenWidth, screenHeight, windowWidth, windowHeight int) 
 	return x, y
 }
 
-func defaultSettingsModel() settingsModel {
-	return settingsModel{
-		Title:       PluginName + " 设置",
-		Description: "这是插件设置窗口模板，可在 settings.go 中修改说明和业务配置。",
-		Status:      "插件运行正常",
-	}
-}
-
 const (
-	synchronize       = 0x00100000
-	wmDestroy         = 0x0002
-	wmClose           = 0x0010
-	wmPaint           = 0x000f
-	wmEraseBkgnd      = 0x0014
-	wmGetMinMaxInfo   = 0x0024
-	swShow            = 5
-	swRestore         = 9
-	wsExTopmost       = 0x00000008
-	wsOverlapped      = 0x00000000
-	wsCaption         = 0x00c00000
-	wsSysMenu         = 0x00080000
-	wsMinimizeBox     = 0x00020000
-	cwUseDefault      = 0x80000000
-	colorWindow       = 5
-	idiApplication    = 32512
-	idcArrow          = 32512
-	dtLeft            = 0x00000000
-	dtCenter          = 0x00000001
-	dtVCenter         = 0x00000004
-	dtSingleLine      = 0x00000020
-	dtWordBreak       = 0x00000010
-	dtNoPrefix        = 0x00000800
-	transparent       = 1
-	fwNormal          = 400
-	fwSemiBold        = 600
-	logPixelsX        = 88
-	smCxScreen        = 0
-	mbOK              = 0
-	mbIconInformation = 0x40
-	swpNoSize         = 0x0001
-	swpNoMove         = 0x0002
-	swpShowWindow     = 0x0040
+	synchronize     = 0x00100000
+	wmCreate        = 0x0001
+	wmDestroy       = 0x0002
+	wmClose         = 0x0010
+	wmCommand       = 0x0111
+	wmGetMinMaxInfo = 0x0024
+	swShow          = 5
+	swRestore       = 9
+	wsExTopmost     = 0x00000008
+	wsExClientEdge  = 0x00000200
+	wsOverlapped    = 0x00000000
+	wsCaption       = 0x00c00000
+	wsSysMenu       = 0x00080000
+	wsMinimizeBox   = 0x00020000
+	wsChild         = 0x40000000
+	wsVisible       = 0x10000000
+	wsTabStop       = 0x00010000
+	wsBorder        = 0x00800000
+	esLeft          = 0x0000
+	esNumber        = 0x2000
+	bsPushButton    = 0x00000000
+	ssLeft          = 0x00000000
+	colorWindow     = 5
+	idiApplication  = 32512
+	idcArrow        = 32512
+	logPixelsX      = 88
+	smCxScreen      = 0
+	swpNoSize       = 0x0001
+	swpNoMove       = 0x0002
+	swpShowWindow   = 0x0040
+	enChange        = 0x0300
+	settingsIDPort  = 1001
+	settingsIDStart = 1002
+	settingsIDStop  = 1003
+	settingsIDOpen  = 1004
 )
 
 var hwndTopmost = ^uintptr(0)
@@ -112,7 +100,7 @@ var (
 	kernel32                = syscall.NewLazyDLL("kernel32.dll")
 	user32                  = syscall.NewLazyDLL("user32.dll")
 	gdi32                   = syscall.NewLazyDLL("gdi32.dll")
-	gdiplus                 = syscall.NewLazyDLL("gdiplus.dll")
+	shell32                 = syscall.NewLazyDLL("shell32.dll")
 	procRegisterClassExW    = user32.NewProc("RegisterClassExW")
 	procUnregisterClassW    = user32.NewProc("UnregisterClassW")
 	procDestroyWindow       = user32.NewProc("DestroyWindow")
@@ -129,37 +117,22 @@ var (
 	procTranslateMessage    = user32.NewProc("TranslateMessage")
 	procDispatchMessageW    = user32.NewProc("DispatchMessageW")
 	procPostQuitMessage     = user32.NewProc("PostQuitMessage")
-	procBeginPaint          = user32.NewProc("BeginPaint")
-	procEndPaint            = user32.NewProc("EndPaint")
+	procGetDC               = user32.NewProc("GetDC")
+	procReleaseDC           = user32.NewProc("ReleaseDC")
 	procGetClientRect       = user32.NewProc("GetClientRect")
 	procAdjustWindowRectEx  = user32.NewProc("AdjustWindowRectEx")
 	procLoadCursorW         = user32.NewProc("LoadCursorW")
 	procLoadIconW           = user32.NewProc("LoadIconW")
 	procGetSystemMetrics    = user32.NewProc("GetSystemMetrics")
-	procDrawTextW           = user32.NewProc("DrawTextW")
-	procFillRect            = user32.NewProc("FillRect")
-	procGetDC               = user32.NewProc("GetDC")
-	procReleaseDC           = user32.NewProc("ReleaseDC")
+	procSetWindowTextW      = user32.NewProc("SetWindowTextW")
+	procGetWindowTextW      = user32.NewProc("GetWindowTextW")
+	procEnableWindow        = user32.NewProc("EnableWindow")
 	procGetDeviceCaps       = gdi32.NewProc("GetDeviceCaps")
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	openProcess             = kernel32.NewProc("OpenProcess")
 	waitSingleObject        = kernel32.NewProc("WaitForSingleObject")
 	closeHandle             = kernel32.NewProc("CloseHandle")
-	procCreateFontW         = gdi32.NewProc("CreateFontW")
-	procSelectObject        = gdi32.NewProc("SelectObject")
-	procDeleteObject        = gdi32.NewProc("DeleteObject")
-	procSetTextColor        = gdi32.NewProc("SetTextColor")
-	procSetBkMode           = gdi32.NewProc("SetBkMode")
-	procCreateSolidBrush    = gdi32.NewProc("CreateSolidBrush")
-	procGdiplusStartup      = gdiplus.NewProc("GdiplusStartup")
-	procGdiplusShutdown     = gdiplus.NewProc("GdiplusShutdown")
-	procGdipCreateFromHDC   = gdiplus.NewProc("GdipCreateFromHDC")
-	procGdipDeleteGraphics  = gdiplus.NewProc("GdipDeleteGraphics")
-	procGdipSetSmoothing    = gdiplus.NewProc("GdipSetSmoothingMode")
-	procGdipCreateSolidFill = gdiplus.NewProc("GdipCreateSolidFill")
-	procGdipDeleteBrush     = gdiplus.NewProc("GdipDeleteBrush")
-	procGdipFillRectangleI  = gdiplus.NewProc("GdipFillRectangleI")
-	procGdipFillEllipseI    = gdiplus.NewProc("GdipFillEllipseI")
+	procShellExecuteW       = shell32.NewProc("ShellExecuteW")
 )
 
 type point struct{ X, Y int32 }
@@ -175,11 +148,6 @@ type msg struct {
 	Pt                            point
 	Private                       uint32
 }
-type paintStruct struct {
-	HDC, Erase, Restore, IncUpdate uintptr
-	Paint                          rect
-	Reserved                       [32]byte
-}
 type wndClassEx struct {
 	Size, Style          uint32
 	WndProc, ClsExtra    uintptr
@@ -188,21 +156,25 @@ type wndClassEx struct {
 	Background, MenuName uintptr
 	ClassName, IconSmall uintptr
 }
-type gdiplusStartupInput struct {
-	Version                  uint32
-	Debug                    uintptr
-	SuppressBackgroundThread int32
-	SuppressExternalCodecs   int32
-}
 type minMaxInfo struct {
 	Reserved, MaxSize, MaxPosition, MinTrackSize, MaxTrackSize point
 }
 
+type settingsControls struct {
+	statusLabel uintptr
+	portEdit    uintptr
+	portState   uintptr
+	startButton uintptr
+	stopButton  uintptr
+	openButton  uintptr
+}
+
 var settingsNative = struct {
 	sync.Mutex
-	hwnd    uintptr
-	done    chan struct{}
-	closing bool
+	hwnd     uintptr
+	controls settingsControls
+	done     chan struct{}
+	closing  bool
 }{}
 
 var settingsWndProc = syscall.NewCallback(settingsWindowProc)
@@ -216,6 +188,7 @@ func showSettingsWindow() {
 		if iconic != 0 {
 			procShowWindow.Call(hwnd, swRestore)
 		}
+		refreshSettingsControls()
 		procSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize|swpShowWindow)
 		procSetForegroundWindow.Call(hwnd)
 		return
@@ -251,6 +224,7 @@ func settingsWindowThread(done chan struct{}) {
 	defer func() {
 		settingsNative.Lock()
 		settingsNative.hwnd = 0
+		settingsNative.controls = settingsControls{}
 		settingsNative.done = nil
 		settingsNative.closing = false
 		close(done)
@@ -258,8 +232,8 @@ func settingsWindowThread(done chan struct{}) {
 	}()
 
 	instance, _, _ := procGetModuleHandleW.Call(0)
-	className, _ := syscall.UTF16PtrFromString("BeeGoSettingsWindow")
-	title, _ := syscall.UTF16PtrFromString(defaultSettingsModel().Title)
+	className, _ := syscall.UTF16PtrFromString("BeeGoAISettingsWindow")
+	title, _ := syscall.UTF16PtrFromString(PluginName + " 设置")
 	cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
 	icon, _, _ := procLoadIconW.Call(0, idiApplication)
 	class := wndClassEx{Size: uint32(unsafe.Sizeof(wndClassEx{})), WndProc: settingsWndProc, Instance: instance, Icon: icon, Cursor: cursor, Background: colorWindow + 1, ClassName: uintptr(unsafe.Pointer(className)), IconSmall: icon}
@@ -315,8 +289,10 @@ func settingsDPI() int {
 
 func settingsWindowProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintptr {
 	switch message {
-	case wmEraseBkgnd:
-		return 1
+	case wmCreate:
+		createSettingsControls(hwnd)
+		refreshSettingsControls()
+		return 0
 	case wmGetMinMaxInfo:
 		info := (*minMaxInfo)(unsafe.Pointer(lparam))
 		var placement windowPlacement
@@ -329,8 +305,8 @@ func settingsWindowProc(hwnd uintptr, message uint32, wparam, lparam uintptr) ui
 			info.MaxTrackSize = point{width, height}
 		}
 		return 0
-	case wmPaint:
-		paintSettings(hwnd)
+	case wmCommand:
+		handleSettingsCommand(wparam)
 		return 0
 	case wmClose:
 		procDestroyWindow.Call(hwnd)
@@ -343,68 +319,198 @@ func settingsWindowProc(hwnd uintptr, message uint32, wparam, lparam uintptr) ui
 	return result
 }
 
-func paintSettings(hwnd uintptr) {
-	var ps paintStruct
-	hdc, _, _ := procBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
-	if hdc == 0 {
+func createSettingsControls(hwnd uintptr) {
+	dpi := settingsDPI()
+	p := scaleDPI(settingsBasePadding, dpi)
+	labelW := scaleDPI(120, dpi)
+	editW := scaleDPI(120, dpi)
+	lineH := scaleDPI(26, dpi)
+	gap := scaleDPI(10, dpi)
+	y := p
+	status := createChild(hwnd, "STATIC", "", ssLeft, 0, p, y, scaleDPI(500, dpi), lineH, 0)
+	y += lineH + gap
+	createChild(hwnd, "STATIC", "HTTP端口：", ssLeft, 0, p, y+scaleDPI(4, dpi), labelW, lineH, 0)
+	portEdit := createChild(hwnd, "EDIT", strconv.Itoa(defaultHTTPPort), wsBorder|esLeft|esNumber, wsExClientEdge, p+labelW, y, editW, lineH, settingsIDPort)
+	portState := createChild(hwnd, "STATIC", "", ssLeft, 0, p+labelW+editW+gap, y+scaleDPI(4, dpi), scaleDPI(250, dpi), lineH, 0)
+	y += lineH + scaleDPI(22, dpi)
+	startButton := createChild(hwnd, "BUTTON", "启动HTTP服务", bsPushButton|wsTabStop, 0, p, y, scaleDPI(126, dpi), lineH+scaleDPI(8, dpi), settingsIDStart)
+	stopButton := createChild(hwnd, "BUTTON", "停止HTTP服务", bsPushButton|wsTabStop, 0, p+scaleDPI(138, dpi), y, scaleDPI(126, dpi), lineH+scaleDPI(8, dpi), settingsIDStop)
+	openButton := createChild(hwnd, "BUTTON", "打开网址", bsPushButton|wsTabStop, 0, p+scaleDPI(276, dpi), y, scaleDPI(104, dpi), lineH+scaleDPI(8, dpi), settingsIDOpen)
+	settingsNative.Lock()
+	settingsNative.controls = settingsControls{statusLabel: status, portEdit: portEdit, portState: portState, startButton: startButton, stopButton: stopButton, openButton: openButton}
+	settingsNative.Unlock()
+}
+
+func createChild(parent uintptr, className, text string, style, exStyle uintptr, x, y, width, height, id int) uintptr {
+	classPtr, _ := syscall.UTF16PtrFromString(className)
+	textPtr, _ := syscall.UTF16PtrFromString(text)
+	hwnd, _, _ := procCreateWindowExW.Call(
+		exStyle,
+		uintptr(unsafe.Pointer(classPtr)),
+		uintptr(unsafe.Pointer(textPtr)),
+		wsChild|wsVisible|style,
+		uintptr(x),
+		uintptr(y),
+		uintptr(width),
+		uintptr(height),
+		parent,
+		uintptr(id),
+		0,
+		0,
+	)
+	return hwnd
+}
+
+func handleSettingsCommand(wparam uintptr) {
+	id := int(wparam & 0xffff)
+	notify := uint32((wparam >> 16) & 0xffff)
+	switch id {
+	case settingsIDPort:
+		if notify == enChange {
+			updatePortState()
+		}
+	case settingsIDStart:
+		startSettingsHTTP()
+	case settingsIDStop:
+		stopSettingsHTTP()
+	case settingsIDOpen:
+		openSettingsURL()
+	}
+}
+
+func refreshSettingsControls() {
+	settingsNative.Lock()
+	controls := settingsNative.controls
+	settingsNative.Unlock()
+	if controls.statusLabel == 0 {
 		return
 	}
-	defer procEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
-	var client rect
-	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&client)))
-	dpi := settingsDPI()
-	layout := defaultSettingsLayout(dpi)
-	model := defaultSettingsModel()
-	background, _, _ := procCreateSolidBrush.Call(rgb(246, 247, 251))
-	procFillRect.Call(hdc, uintptr(unsafe.Pointer(&client)), background)
-	procDeleteObject.Call(background)
-
-	var token, graphics, whiteBrush, accentBrush, successBrush uintptr
-	input := gdiplusStartupInput{Version: 1}
-	status, _, _ := procGdiplusStartup.Call(uintptr(unsafe.Pointer(&token)), uintptr(unsafe.Pointer(&input)), 0)
-	if status == 0 {
-		procGdipCreateFromHDC.Call(hdc, uintptr(unsafe.Pointer(&graphics)))
-		procGdipSetSmoothing.Call(graphics, 4)
-		procGdipCreateSolidFill.Call(argb(255, 255, 255, 255), uintptr(unsafe.Pointer(&whiteBrush)))
-		procGdipCreateSolidFill.Call(argb(255, 99, 102, 241), uintptr(unsafe.Pointer(&accentBrush)))
-		procGdipCreateSolidFill.Call(argb(255, 18, 183, 106), uintptr(unsafe.Pointer(&successBrush)))
-		p := layout.Padding
-		procGdipFillRectangleI.Call(graphics, whiteBrush, uintptr(p), uintptr(layout.TitleHeight+p), uintptr(layout.ClientWidth-2*p), uintptr(layout.ClientHeight-layout.TitleHeight-2*p))
-		procGdipFillRectangleI.Call(graphics, accentBrush, uintptr(p), uintptr(p), uintptr(scaleDPI(6, dpi)), uintptr(layout.TitleHeight-scaleDPI(8, dpi)))
-		procGdipFillEllipseI.Call(graphics, successBrush, uintptr(p+scaleDPI(22, dpi)), uintptr(layout.TitleHeight+p+scaleDPI(42, dpi)), uintptr(scaleDPI(12, dpi)), uintptr(scaleDPI(12, dpi)))
-		procGdipDeleteBrush.Call(successBrush)
-		procGdipDeleteBrush.Call(accentBrush)
-		procGdipDeleteBrush.Call(whiteBrush)
-		procGdipDeleteGraphics.Call(graphics)
-		procGdiplusShutdown.Call(token)
+	status := HTTPServiceStatus{Port: defaultHTTPPort, URL: ConfigURL(defaultHTTPPort), Config: DefaultAIConfig()}
+	if service := currentHTTPService(); service != nil {
+		status = service.Status()
 	}
+	setWindowText(controls.statusLabel, "HTTP服务："+runningText(status.Running))
+	setWindowText(controls.portEdit, strconv.Itoa(status.Config.Port))
+	updatePortState()
+	enableWindow(controls.startButton, !status.Running)
+	enableWindow(controls.stopButton, status.Running)
+	enableWindow(controls.openButton, status.Running)
+}
 
-	fontName, _ := syscall.UTF16PtrFromString("Microsoft YaHei UI")
-	titleFont, _, _ := procCreateFontW.Call(uintptr(-scaleDPI(22, dpi)), 0, 0, 0, fwSemiBold, 0, 0, 0, 1, 0, 0, 5, 0, uintptr(unsafe.Pointer(fontName)))
-	bodyFont, _, _ := procCreateFontW.Call(uintptr(-scaleDPI(14, dpi)), 0, 0, 0, fwNormal, 0, 0, 0, 1, 0, 0, 5, 0, uintptr(unsafe.Pointer(fontName)))
-	procSetBkMode.Call(hdc, transparent)
-	drawWindowText(hdc, model.Title, rect{int32(layout.Padding + scaleDPI(22, dpi)), int32(layout.Padding), int32(layout.ClientWidth - layout.Padding), int32(layout.Padding + layout.TitleHeight)}, titleFont, rgb(24, 34, 48), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-	drawWindowText(hdc, model.Status, rect{int32(layout.Padding + scaleDPI(42, dpi)), int32(layout.TitleHeight + layout.Padding + scaleDPI(30, dpi)), int32(layout.ClientWidth - layout.Padding), int32(layout.TitleHeight + layout.Padding + scaleDPI(68, dpi))}, bodyFont, rgb(18, 122, 77), dtLeft|dtVCenter|dtSingleLine|dtNoPrefix)
-	drawWindowText(hdc, model.Description, rect{int32(layout.Padding + scaleDPI(22, dpi)), int32(layout.TitleHeight + layout.Padding + scaleDPI(92, dpi)), int32(layout.ClientWidth - layout.Padding - scaleDPI(22, dpi)), int32(layout.ClientHeight - layout.Padding)}, bodyFont, rgb(102, 112, 133), dtLeft|dtWordBreak|dtNoPrefix)
-	if titleFont != 0 {
-		procDeleteObject.Call(titleFont)
+func updatePortState() {
+	settingsNative.Lock()
+	controls := settingsNative.controls
+	settingsNative.Unlock()
+	if controls.portState == 0 {
+		return
 	}
-	if bodyFont != 0 {
-		procDeleteObject.Call(bodyFont)
+	port, ok := readPortEdit()
+	if !ok {
+		setWindowText(controls.portState, "端口无效")
+		return
+	}
+	if service := currentHTTPService(); service != nil {
+		status := service.Status()
+		if status.Running && status.Port == port {
+			setWindowText(controls.portState, "当前服务使用中")
+			return
+		}
+	}
+	if IsPortAvailable(port) {
+		setWindowText(controls.portState, "端口可用")
+	} else {
+		setWindowText(controls.portState, "端口不可用")
 	}
 }
 
-func drawWindowText(hdc uintptr, text string, area rect, font uintptr, color uintptr, flags uintptr) {
+func startSettingsHTTP() {
+	service := currentHTTPService()
+	if service == nil {
+		setStatusText("HTTP服务：插件尚未初始化")
+		return
+	}
+	port, ok := readPortEdit()
+	if !ok {
+		setStatusText("HTTP服务：端口无效")
+		updatePortState()
+		return
+	}
+	if !IsPortAvailable(port) {
+		setStatusText("HTTP服务：端口不可用")
+		updatePortState()
+		return
+	}
+	if err := service.Start(port); err != nil {
+		setStatusText("HTTP服务：启动失败 - " + err.Error())
+		updatePortState()
+		return
+	}
+	refreshSettingsControls()
+}
+
+func stopSettingsHTTP() {
+	if service := currentHTTPService(); service != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = service.Stop(ctx)
+		cancel()
+	}
+	refreshSettingsControls()
+}
+
+func openSettingsURL() {
+	status := HTTPServiceStatus{Port: defaultHTTPPort}
+	if service := currentHTTPService(); service != nil {
+		status = service.Status()
+	}
+	operation, _ := syscall.UTF16PtrFromString("open")
+	target, _ := syscall.UTF16PtrFromString(ConfigURL(status.Port))
+	procShellExecuteW.Call(0, uintptr(unsafe.Pointer(operation)), uintptr(unsafe.Pointer(target)), 0, 0, swShow)
+}
+
+func readPortEdit() (int, bool) {
+	settingsNative.Lock()
+	portEdit := settingsNative.controls.portEdit
+	settingsNative.Unlock()
+	if portEdit == 0 {
+		return defaultHTTPPort, true
+	}
+	var buffer [32]uint16
+	procGetWindowTextW.Call(portEdit, uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)))
+	text := syscall.UTF16ToString(buffer[:])
+	port, err := strconv.Atoi(text)
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, false
+	}
+	return port, true
+}
+
+func setStatusText(text string) {
+	settingsNative.Lock()
+	status := settingsNative.controls.statusLabel
+	settingsNative.Unlock()
+	if status != 0 {
+		setWindowText(status, text)
+	}
+}
+
+func setWindowText(hwnd uintptr, text string) {
 	value, _ := syscall.UTF16PtrFromString(text)
-	old, _, _ := procSelectObject.Call(hdc, font)
-	procSetTextColor.Call(hdc, color)
-	procDrawTextW.Call(hdc, uintptr(unsafe.Pointer(value)), ^uintptr(0), uintptr(unsafe.Pointer(&area)), flags)
-	procSelectObject.Call(hdc, old)
+	procSetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(value)))
 }
 
-func rgb(r, g, b byte) uintptr { return uintptr(uint32(r) | uint32(g)<<8 | uint32(b)<<16) }
-func argb(a, r, g, b byte) uintptr {
-	return uintptr(uint32(a)<<24 | uint32(r)<<16 | uint32(g)<<8 | uint32(b))
+func enableWindow(hwnd uintptr, enabled bool) {
+	value := uintptr(0)
+	if enabled {
+		value = 1
+	}
+	procEnableWindow.Call(hwnd, value)
+}
+
+func runningText(running bool) string {
+	if running {
+		return "运行中"
+	}
+	return "未启动"
 }
 
 func startHostWatcher(hostPID uint32) {

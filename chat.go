@@ -29,6 +29,7 @@ type ChatService struct {
 var pluginRuntime = struct {
 	sync.RWMutex
 	chat *ChatService
+	http *HTTPService
 }{}
 
 func ParseAIInput(message string) (string, bool) {
@@ -115,4 +116,10 @@ func currentChatService() *ChatService {
 	pluginRuntime.RLock()
 	defer pluginRuntime.RUnlock()
 	return pluginRuntime.chat
+}
+
+func currentHTTPService() *HTTPService {
+	pluginRuntime.RLock()
+	defer pluginRuntime.RUnlock()
+	return pluginRuntime.http
 }
