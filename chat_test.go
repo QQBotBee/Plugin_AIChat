@@ -6,16 +6,26 @@ import (
 	"testing"
 )
 
-func TestParseAIInputRequiresHashPrefix(t *testing.T) {
-	if _, ok := ParseAIInput("你好"); ok {
-		t.Fatal("ParseAIInput accepted message without # prefix")
+func TestParseAIInputRequiresConfiguredPrefix(t *testing.T) {
+	if _, ok := ParseAIInput("你好", "#"); ok {
+		t.Fatal("ParseAIInput accepted message without configured prefix")
 	}
 }
 
 func TestParseAIInputTrimsAfterPrefix(t *testing.T) {
-	got, ok := ParseAIInput("#  你好  ")
+	got, ok := ParseAIInput("!  你好  ", "!")
 	if !ok {
 		t.Fatal("ParseAIInput rejected prefixed message")
+	}
+	if got != "你好" {
+		t.Fatalf("input = %q, want 你好", got)
+	}
+}
+
+func TestParseAIInputAcceptsFriendMessageWithoutPrefix(t *testing.T) {
+	got, ok := ParseAIInput("  你好  ", "")
+	if !ok {
+		t.Fatal("ParseAIInput rejected friend message without prefix")
 	}
 	if got != "你好" {
 		t.Fatalf("input = %q, want 你好", got)
@@ -57,7 +67,7 @@ func TestChatServiceSendsMarkdownNativeReply(t *testing.T) {
 	service := NewChatService(configPath, NewSessionStore(filepath.Join(dir, "sessions")), client)
 
 	var sent []MarkdownMessage
-	handled := service.Handle(context.Background(), ChatTarget{Kind: ChatTargetFriend, SourceID: "friend1", UserID: "friend1"}, "#你好", func(message MarkdownMessage) error {
+	handled := service.Handle(context.Background(), ChatTarget{Kind: ChatTargetFriend, SourceID: "friend1", UserID: "friend1"}, "你好", func(message MarkdownMessage) error {
 		sent = append(sent, message)
 		return nil
 	})
@@ -72,6 +82,55 @@ func TestChatServiceSendsMarkdownNativeReply(t *testing.T) {
 	}
 	if sent[0].TemplateID != "" || sent[0].TemplateIndex != 0 {
 		t.Fatalf("sent markdown = %#v, want custom native markdown only", sent[0])
+	}
+}
+
+func TestChatServiceRequiresPublicPrefixForGroup(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	cfg := DefaultAIConfig()
+	cfg.Model = "alpha-free"
+	cfg.PublicPrefix = "!"
+	if err := SaveAIConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveAIConfig: %v", err)
+	}
+	client := &fakeCompleter{reply: ChatMessage{Role: "assistant", Content: "公共回复"}}
+	service := NewChatService(configPath, NewSessionStore(filepath.Join(dir, "sessions")), client)
+
+	handled := service.Handle(context.Background(), ChatTarget{Kind: ChatTargetGroup, SourceID: "group1", UserID: "user1"}, "#你好", func(message MarkdownMessage) error {
+		t.Fatal("send should not be called when public prefix is not matched")
+		return nil
+	})
+	if handled {
+		t.Fatal("Handle returned true for unmatched public prefix")
+	}
+	if client.calls != 0 {
+		t.Fatalf("client calls = %d, want 0", client.calls)
+	}
+}
+
+func TestChatServiceUsesSharedPublicPrefixForChannel(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	cfg := DefaultAIConfig()
+	cfg.Model = "alpha-free"
+	cfg.PublicPrefix = "!"
+	if err := SaveAIConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveAIConfig: %v", err)
+	}
+	client := &fakeCompleter{reply: ChatMessage{Role: "assistant", Content: "频道回复"}}
+	service := NewChatService(configPath, NewSessionStore(filepath.Join(dir, "sessions")), client)
+
+	var sent []MarkdownMessage
+	handled := service.Handle(context.Background(), ChatTarget{Kind: ChatTargetChannel, SourceID: "channel1", UserID: "user1"}, "!你好", func(message MarkdownMessage) error {
+		sent = append(sent, message)
+		return nil
+	})
+	if !handled {
+		t.Fatal("Handle returned false for matched channel public prefix")
+	}
+	if len(sent) != 1 || sent[0].Native != "频道回复" {
+		t.Fatalf("sent = %#v, want channel reply as native markdown", sent)
 	}
 }
 

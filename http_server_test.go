@@ -47,6 +47,7 @@ func TestHTTPServiceConfigRoundTrip(t *testing.T) {
 		Model:             "alpha-free",
 		SystemPrompt:      "系统",
 		ConversationLimit: 8,
+		PublicPrefix:      "!",
 		EnableFriend:      true,
 		EnableGroup:       false,
 		EnableChannel:     true,
@@ -70,7 +71,7 @@ func TestHTTPServiceConfigRoundTrip(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
 		t.Fatalf("decode status: %v", err)
 	}
-	if status.Config.Model != "alpha-free" || status.Config.Port != 9091 || status.Config.EnableGroup {
+	if status.Config.Model != "alpha-free" || status.Config.Port != 9091 || status.Config.PublicPrefix != "!" || status.Config.EnableGroup {
 		t.Fatalf("status config = %+v, want saved config", status.Config)
 	}
 }

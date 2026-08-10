@@ -35,11 +35,16 @@ var pluginRuntime = struct {
 	http *HTTPService
 }{}
 
-func ParseAIInput(message string) (string, bool) {
-	if !strings.HasPrefix(message, "#") {
+func ParseAIInput(message, prefix string) (string, bool) {
+	message = strings.TrimSpace(message)
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return strings.TrimSpace(message), strings.TrimSpace(message) != ""
+	}
+	if !strings.HasPrefix(message, prefix) {
 		return "", false
 	}
-	input := strings.TrimSpace(strings.TrimPrefix(message, "#"))
+	input := strings.TrimSpace(strings.TrimPrefix(message, prefix))
 	return input, input != ""
 }
 
@@ -48,8 +53,7 @@ func NewChatService(configPath string, sessions *SessionStore, client chatComple
 }
 
 func (s *ChatService) Handle(ctx context.Context, target ChatTarget, message string, send func(MarkdownMessage) error) bool {
-	input, ok := ParseAIInput(message)
-	if !ok || s == nil || s.client == nil || s.sessions == nil || send == nil {
+	if s == nil || s.client == nil || s.sessions == nil || send == nil {
 		return false
 	}
 	cfg, err := LoadAIConfig(s.configPath)
@@ -58,6 +62,14 @@ func (s *ChatService) Handle(ctx context.Context, target ChatTarget, message str
 		return false
 	}
 	if !target.enabled(cfg) {
+		return false
+	}
+	prefix := cfg.PublicPrefix
+	if target.Kind == ChatTargetFriend {
+		prefix = ""
+	}
+	input, ok := ParseAIInput(message, prefix)
+	if !ok {
 		return false
 	}
 	sessionKey := SessionKey(target.Kind, target.SourceID, target.UserID)

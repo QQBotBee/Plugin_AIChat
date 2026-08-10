@@ -235,6 +235,8 @@ button.primary{background:#1a73e8;border-color:#1a73e8;color:#fff}
 <textarea id="system"></textarea>
 <label for="limit">对话上限</label>
 <input id="limit" type="number" min="4">
+<label for="prefix">群聊/频道公共前缀</label>
+<input id="prefix" placeholder="#">
 <div class="row">
 <label><input id="friend" type="checkbox"> 好友</label>
 <label><input id="group" type="checkbox"> 群聊</label>
@@ -252,7 +254,8 @@ async function loadStatus(doneText){
   status.textContent='HTTP服务：'+(s.running?'运行中':'未启动')+'；访问地址：'+s.url;
   model.value=c.model||'';
   system.value=c.system_prompt||'';
-  limit.value=c.conversation_limit||42;
+  limit.value=c.conversation_limit||80;
+  prefix.value=c.public_prefix||'#';
   friend.checked=!!c.enable_friend;
   group.checked=!!c.enable_group;
   channel.checked=!!c.enable_channel;
@@ -280,7 +283,7 @@ loadModels.onclick=async()=>{
 models.onchange=()=>{model.value=models.value};
 save.onclick=async()=>{
  try{
-  const payload={port:0,model:model.value,system_prompt:system.value,conversation_limit:Number(limit.value),enable_friend:friend.checked,enable_group:group.checked,enable_channel:channel.checked};
+  const payload={port:0,model:model.value,system_prompt:system.value,conversation_limit:Number(limit.value),public_prefix:prefix.value,enable_friend:friend.checked,enable_group:group.checked,enable_channel:channel.checked};
   const s=await (await fetch('/api/status')).json();
   payload.port=s.config.port;
   const r=await fetch('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
