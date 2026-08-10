@@ -94,19 +94,23 @@ func (s *ChatService) Handle(ctx context.Context, target ChatTarget, message str
 		return false
 	}
 	reply, err := s.client.Chat(ctx, cfg.Model, messages)
+	persistTurn := err == nil
 	if err != nil {
 		reply = ChatMessage{Role: "assistant", Content: friendlyAIError(err)}
 	}
 	if strings.TrimSpace(reply.Content) == "" {
 		reply = ChatMessage{Role: "assistant", Content: friendlyAIError(ErrAIUnavailable)}
+		persistTurn = false
 	}
 	if err := send(MarkdownMessage{Native: reply.Content}); err != nil {
 		s.logError("发送AI回复失败: " + err.Error())
 		return true
 	}
-	messages = append(messages, reply)
-	if err := s.sessions.Save(sessionKey, messages); err != nil {
-		s.logError("保存AI会话失败: " + err.Error())
+	if persistTurn {
+		messages = append(messages, reply)
+		if err := s.sessions.Save(sessionKey, messages); err != nil {
+			s.logError("保存AI会话失败: " + err.Error())
+		}
 	}
 	return true
 }
