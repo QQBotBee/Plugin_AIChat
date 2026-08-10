@@ -57,40 +57,45 @@ func centeredPosition(screenWidth, screenHeight, windowWidth, windowHeight int) 
 }
 
 const (
-	synchronize     = 0x00100000
-	wmCreate        = 0x0001
-	wmDestroy       = 0x0002
-	wmClose         = 0x0010
-	wmCommand       = 0x0111
-	swShow          = 5
-	swRestore       = 9
-	wsExTopmost     = 0x00000008
-	wsExClientEdge  = 0x00000200
-	wsOverlapped    = 0x00000000
-	wsCaption       = 0x00c00000
-	wsSysMenu       = 0x00080000
-	wsMinimizeBox   = 0x00020000
-	wsChild         = 0x40000000
-	wsVisible       = 0x10000000
-	wsTabStop       = 0x00010000
-	wsBorder        = 0x00800000
-	esLeft          = 0x0000
-	esNumber        = 0x2000
-	bsPushButton    = 0x00000000
-	ssLeft          = 0x00000000
-	colorWindow     = 5
-	idiApplication  = 32512
-	idcArrow        = 32512
-	logPixelsX      = 88
-	smCxScreen      = 0
-	swpNoSize       = 0x0001
-	swpNoMove       = 0x0002
-	swpShowWindow   = 0x0040
-	enChange        = 0x0300
-	settingsIDPort  = 1001
-	settingsIDStart = 1002
-	settingsIDStop  = 1003
-	settingsIDOpen  = 1004
+	synchronize      = 0x00100000
+	wmCreate         = 0x0001
+	wmDestroy        = 0x0002
+	wmClose          = 0x0010
+	wmCommand        = 0x0111
+	wmCtlColorEdit   = 0x0133
+	wmCtlColorBtn    = 0x0135
+	wmCtlColorStatic = 0x0138
+	swShow           = 5
+	swRestore        = 9
+	wsExTopmost      = 0x00000008
+	wsExClientEdge   = 0x00000200
+	wsOverlapped     = 0x00000000
+	wsCaption        = 0x00c00000
+	wsSysMenu        = 0x00080000
+	wsMinimizeBox    = 0x00020000
+	wsChild          = 0x40000000
+	wsVisible        = 0x10000000
+	wsTabStop        = 0x00010000
+	wsBorder         = 0x00800000
+	esLeft           = 0x0000
+	esNumber         = 0x2000
+	bsPushButton     = 0x00000000
+	ssLeft           = 0x00000000
+	colorWindow      = 5
+	colorBlack       = 0x000000
+	colorWhite       = 0xffffff
+	idiApplication   = 32512
+	idcArrow         = 32512
+	logPixelsX       = 88
+	smCxScreen       = 0
+	swpNoSize        = 0x0001
+	swpNoMove        = 0x0002
+	swpShowWindow    = 0x0040
+	enChange         = 0x0300
+	settingsIDPort   = 1001
+	settingsIDStart  = 1002
+	settingsIDStop   = 1003
+	settingsIDOpen   = 1004
 )
 
 var hwndTopmost = ^uintptr(0)
@@ -115,6 +120,7 @@ var (
 	procTranslateMessage    = user32.NewProc("TranslateMessage")
 	procDispatchMessageW    = user32.NewProc("DispatchMessageW")
 	procPostQuitMessage     = user32.NewProc("PostQuitMessage")
+	procGetSysColorBrush    = user32.NewProc("GetSysColorBrush")
 	procGetDC               = user32.NewProc("GetDC")
 	procReleaseDC           = user32.NewProc("ReleaseDC")
 	procGetClientRect       = user32.NewProc("GetClientRect")
@@ -126,6 +132,8 @@ var (
 	procGetWindowTextW      = user32.NewProc("GetWindowTextW")
 	procEnableWindow        = user32.NewProc("EnableWindow")
 	procGetDeviceCaps       = gdi32.NewProc("GetDeviceCaps")
+	procSetTextColor        = gdi32.NewProc("SetTextColor")
+	procSetBkColor          = gdi32.NewProc("SetBkColor")
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	openProcess             = kernel32.NewProc("OpenProcess")
 	waitSingleObject        = kernel32.NewProc("WaitForSingleObject")
@@ -286,6 +294,8 @@ func settingsWindowProc(hwnd uintptr, message uint32, wparam, lparam uintptr) ui
 	case wmCommand:
 		handleSettingsCommand(wparam)
 		return 0
+	case wmCtlColorStatic, wmCtlColorEdit, wmCtlColorBtn:
+		return whiteControlBrush(wparam)
 	case wmClose:
 		procDestroyWindow.Call(hwnd)
 		return 0
@@ -295,6 +305,13 @@ func settingsWindowProc(hwnd uintptr, message uint32, wparam, lparam uintptr) ui
 	}
 	result, _, _ := procDefWindowProcW.Call(hwnd, uintptr(message), wparam, lparam)
 	return result
+}
+
+func whiteControlBrush(hdc uintptr) uintptr {
+	procSetTextColor.Call(hdc, colorBlack)
+	procSetBkColor.Call(hdc, colorWhite)
+	brush, _, _ := procGetSysColorBrush.Call(colorWindow)
+	return brush
 }
 
 func createSettingsControls(hwnd uintptr) {

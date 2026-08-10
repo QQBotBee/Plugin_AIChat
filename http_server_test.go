@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +96,21 @@ func TestHTTPServiceModelsEndpointReturnsFreeModels(t *testing.T) {
 	}
 	if len(out.Models) != 1 || out.Models[0] != "alpha-free" {
 		t.Fatalf("models = %#v, want alpha-free only", out.Models)
+	}
+}
+
+func TestHTTPServiceConfigPageIncludesSaveFeedback(t *testing.T) {
+	service := NewHTTPService(filepath.Join(t.TempDir(), "config.json"), NewAIClient("", nil))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	service.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "alert(text);") {
+		t.Fatal("config page missing save alert feedback")
+	}
+	if !strings.Contains(body, "配置已保存") {
+		t.Fatal("config page missing save success text")
 	}
 }

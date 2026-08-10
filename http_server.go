@@ -227,6 +227,7 @@ button.primary{background:#1a73e8;border-color:#1a73e8;color:#fff}
 <main>
 <h1>AI智能聊天设置</h1>
 <div id="status"></div>
+<div id="message" style="margin:10px 0;font-weight:600;"></div>
 <label for="model">模型名称</label>
 <div class="row"><select id="models"></select><button type="button" id="loadModels">获取可用模型列表</button></div>
 <input id="model" placeholder="例如 xxx-free">
@@ -242,15 +243,58 @@ button.primary{background:#1a73e8;border-color:#1a73e8;color:#fff}
 <button class="primary" type="button" id="save">保存配置</button>
 </main>
 <script>
-async function loadStatus(){
- const r=await fetch('/api/status'); const s=await r.json(); const c=s.config;
- status.textContent='HTTP服务：'+(s.running?'运行中':'未启动')+'；访问地址：'+s.url;
- model.value=c.model||''; system.value=c.system_prompt||''; limit.value=c.conversation_limit||42;
- friend.checked=!!c.enable_friend; group.checked=!!c.enable_group; channel.checked=!!c.enable_channel;
+function showMessage(text){message.textContent=text;}
+async function loadStatus(doneText){
+ try{
+  const r=await fetch('/api/status');
+  const s=await r.json();
+  const c=s.config;
+  status.textContent='HTTP服务：'+(s.running?'运行中':'未启动')+'；访问地址：'+s.url;
+  model.value=c.model||'';
+  system.value=c.system_prompt||'';
+  limit.value=c.conversation_limit||42;
+  friend.checked=!!c.enable_friend;
+  group.checked=!!c.enable_group;
+  channel.checked=!!c.enable_channel;
+  showMessage(doneText||'配置已加载');
+ }catch(e){
+  showMessage('读取配置失败：'+e.message);
+ }
 }
-loadModels.onclick=async()=>{models.innerHTML=''; const r=await fetch('/api/models'); const data=await r.json(); (data.models||[]).forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;models.appendChild(o)}); if(models.value) model.value=models.value;};
+loadModels.onclick=async()=>{
+ try{
+  showMessage('正在获取模型列表...');
+  models.innerHTML='';
+  const r=await fetch('/api/models');
+  if(!r.ok) throw new Error(await r.text());
+  const data=await r.json();
+  (data.models||[]).forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;models.appendChild(o)});
+  if(models.value) model.value=models.value;
+  showMessage((data.models||[]).length?'模型列表已更新':'未获取到可用 free 模型');
+ }catch(e){
+  const text='获取模型列表失败：'+e.message;
+  showMessage(text);
+  alert(text);
+ }
+};
 models.onchange=()=>{model.value=models.value};
-save.onclick=async()=>{const payload={port:0,model:model.value,system_prompt:system.value,conversation_limit:Number(limit.value),enable_friend:friend.checked,enable_group:group.checked,enable_channel:channel.checked}; const s=await (await fetch('/api/status')).json(); payload.port=s.config.port; const r=await fetch('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}); status.textContent=r.ok?'配置已保存':'保存失败：'+await r.text();};
+save.onclick=async()=>{
+ try{
+  const payload={port:0,model:model.value,system_prompt:system.value,conversation_limit:Number(limit.value),enable_friend:friend.checked,enable_group:group.checked,enable_channel:channel.checked};
+  const s=await (await fetch('/api/status')).json();
+  payload.port=s.config.port;
+  const r=await fetch('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+  if(!r.ok) throw new Error(await r.text());
+  const text='配置已保存';
+  showMessage(text);
+  alert(text);
+  await loadStatus(text);
+ }catch(e){
+  const text='保存失败：'+e.message;
+  showMessage(text);
+  alert(text);
+ }
+};
 loadStatus();
 </script>
 </body>
