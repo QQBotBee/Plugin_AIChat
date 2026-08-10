@@ -74,3 +74,22 @@ func TestChatServiceSendsMarkdownNativeReply(t *testing.T) {
 		t.Fatalf("sent markdown = %#v, want custom native markdown only", sent[0])
 	}
 }
+
+func TestInitializePluginServicesCreatesRuntimeServices(t *testing.T) {
+	InitializePluginServices(t.TempDir(), nil)
+	t.Cleanup(func() {
+		StopPluginHTTPService()
+		pluginRuntime.Lock()
+		pluginRuntime.chat = nil
+		pluginRuntime.http = nil
+		pluginRuntime.Unlock()
+	})
+
+	if currentChatService() == nil {
+		t.Fatal("currentChatService() = nil, want initialized service")
+	}
+	if currentHTTPService() == nil {
+		t.Fatal("currentHTTPService() = nil, want initialized service")
+	}
+	StopPluginHTTPService()
+}

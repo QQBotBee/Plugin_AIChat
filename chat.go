@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -122,4 +124,29 @@ func currentHTTPService() *HTTPService {
 	pluginRuntime.RLock()
 	defer pluginRuntime.RUnlock()
 	return pluginRuntime.http
+}
+
+func InitializePluginServices(dataDir string, logger func(string)) {
+	configPath := filepath.Join(dataDir, "config.json")
+	cfg, err := LoadAIConfig(configPath)
+	if err == nil {
+		_ = SaveAIConfig(configPath, cfg)
+	}
+	client := NewAIClient("", nil)
+	chat := NewChatService(configPath, NewSessionStore(filepath.Join(dataDir, "sessions")), client)
+	chat.log = logger
+	pluginRuntime.Lock()
+	pluginRuntime.chat = chat
+	pluginRuntime.http = NewHTTPService(configPath, client)
+	pluginRuntime.Unlock()
+}
+
+func StopPluginHTTPService() {
+	service := currentHTTPService()
+	if service == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = service.Stop(ctx)
 }

@@ -62,7 +62,6 @@ const (
 	wmDestroy       = 0x0002
 	wmClose         = 0x0010
 	wmCommand       = 0x0111
-	wmGetMinMaxInfo = 0x0024
 	swShow          = 5
 	swRestore       = 9
 	wsExTopmost     = 0x00000008
@@ -110,7 +109,6 @@ var (
 	procUpdateWindow        = user32.NewProc("UpdateWindow")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 	procSetWindowPos        = user32.NewProc("SetWindowPos")
-	procGetWindowPlacement  = user32.NewProc("GetWindowPlacement")
 	procIsIconic            = user32.NewProc("IsIconic")
 	procPostMessageW        = user32.NewProc("PostMessageW")
 	procGetMessageW         = user32.NewProc("GetMessageW")
@@ -137,11 +135,6 @@ var (
 
 type point struct{ X, Y int32 }
 type rect struct{ Left, Top, Right, Bottom int32 }
-type windowPlacement struct {
-	Length, Flags, ShowCmd   uint32
-	MinPosition, MaxPosition point
-	NormalPosition           rect
-}
 type msg struct {
 	HWnd, Message, WParam, LParam uintptr
 	Time                          uint32
@@ -155,9 +148,6 @@ type wndClassEx struct {
 	Icon, Cursor         uintptr
 	Background, MenuName uintptr
 	ClassName, IconSmall uintptr
-}
-type minMaxInfo struct {
-	Reserved, MaxSize, MaxPosition, MinTrackSize, MaxTrackSize point
 }
 
 type settingsControls struct {
@@ -292,18 +282,6 @@ func settingsWindowProc(hwnd uintptr, message uint32, wparam, lparam uintptr) ui
 	case wmCreate:
 		createSettingsControls(hwnd)
 		refreshSettingsControls()
-		return 0
-	case wmGetMinMaxInfo:
-		info := (*minMaxInfo)(unsafe.Pointer(lparam))
-		var placement windowPlacement
-		placement.Length = uint32(unsafe.Sizeof(placement))
-		procGetWindowPlacement.Call(hwnd, uintptr(unsafe.Pointer(&placement)))
-		width := placement.NormalPosition.Right - placement.NormalPosition.Left
-		height := placement.NormalPosition.Bottom - placement.NormalPosition.Top
-		if width > 0 && height > 0 {
-			info.MinTrackSize = point{width, height}
-			info.MaxTrackSize = point{width, height}
-		}
 		return 0
 	case wmCommand:
 		handleSettingsCommand(wparam)

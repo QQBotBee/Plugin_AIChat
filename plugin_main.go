@@ -7,10 +7,10 @@ import (
 )
 
 const (
-	PluginName        = "GO测试插件"
+	PluginName        = "AI智能聊天"
 	PluginAuthor      = "周星星"
-	PluginVersion     = "1.0"
-	PluginDescription = "Bee C shell + Go worker template"
+	PluginVersion     = "0.0.1"
+	PluginDescription = "一个简易且实用的AI智能聊天插件"
 )
 
 type PluginMetadata struct {
@@ -56,6 +56,12 @@ func onInitialize(args [][]byte) {
 	if err != nil {
 		return
 	}
+	dataDir, err := bee.GetAppDataDir()
+	if err == nil {
+		InitializePluginServices(dataDir, func(text string) {
+			_ = bee.Log(text)
+		})
+	}
 	_ = bee.Log("插件初始化完成")
 	// dataDir, err := bee.GetAppDataDir()
 	// 可在 dataDir 中创建配置、数据库、缓存和日志文件。
@@ -73,6 +79,7 @@ func onEnable(args [][]byte) {
 
 // onDisable 在插件被禁用时调用，负责停止任务并关闭设置窗口等运行资源。
 func onDisable(args [][]byte) {
+	StopPluginHTTPService()
 	bee, err := beeFromArgs(args)
 	if err == nil {
 		_ = bee.Log("插件被禁用")
@@ -84,6 +91,7 @@ func onDisable(args [][]byte) {
 // robotJSON 是卸载回调传入的机器人上下文，可用于输出日志等框架级操作。
 // Bee 只允许禁用后卸载，设置窗口已在 onDisable 中关闭，这里不重复处理窗口。
 func onUnload(args [][]byte) {
+	StopPluginHTTPService()
 	bee, err := beeFromArgs(args)
 	if err == nil {
 		_ = bee.Log("插件被卸载")
