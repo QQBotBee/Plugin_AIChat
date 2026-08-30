@@ -9,8 +9,8 @@ import (
 const (
 	PluginName        = "AI智能聊天"
 	PluginAuthor      = "周星星"
-	PluginVersion     = "0.0.1"
-	PluginDescription = "一个简易且实用的AI智能聊天插件"
+	PluginVersion     = "0.0.2"
+	PluginDescription = "一个简易且实用的AI智能聊天插件，支持多模态"
 )
 
 type PluginMetadata struct {
