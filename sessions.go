@@ -13,6 +13,7 @@ const memoryCompressionPrompt = "简要概括一下咱们两个的聊天记录�
 
 type chatCompleter interface {
 	Chat(ctx context.Context, model string, messages []ChatMessage) (ChatMessage, error)
+	ChatMultimodal(ctx context.Context, model string, messages []ChatRequestMessage) (ChatMessage, error)
 }
 
 type SessionStore struct {

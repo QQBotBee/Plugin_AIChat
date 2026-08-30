@@ -26,6 +26,13 @@ type ChatMessage struct {
 	Content string `json:"content"`
 }
 
+type chatCompletionRequest struct {
+	Model            string               `json:"model"`
+	Stream           bool                 `json:"stream"`
+	IncludeReasoning bool                 `json:"include_reasoning"`
+	Messages         []ChatRequestMessage `json:"messages"`
+}
+
 type AIClient struct {
 	mu           sync.RWMutex
 	baseURL      string
@@ -123,17 +130,37 @@ func (c *AIClient) ListFreeModels(ctx context.Context) ([]string, error) {
 }
 
 func (c *AIClient) Chat(ctx context.Context, model string, messages []ChatMessage) (ChatMessage, error) {
+	requestMessages := buildTextOnlyRequestMessages(messages)
+	reply, err := c.chatCompletion(ctx, model, requestMessages)
+	if err != nil {
+		return ChatMessage{}, err
+	}
+	return reply, nil
+}
+
+func (c *AIClient) ChatMultimodal(ctx context.Context, model string, messages []ChatRequestMessage) (ChatMessage, error) {
+	resolved := make([]ChatRequestMessage, 0, len(messages))
+	for _, message := range messages {
+		if parts, ok := message.Content.([]ChatContentPart); ok {
+			resolvedParts, err := c.resolveChatContentParts(ctx, parts)
+			if err != nil {
+				return ChatMessage{}, err
+			}
+			resolved = append(resolved, ChatRequestMessage{Role: message.Role, Content: resolvedParts})
+			continue
+		}
+		resolved = append(resolved, message)
+	}
+	return c.chatCompletion(ctx, model, resolved)
+}
+
+func (c *AIClient) chatCompletion(ctx context.Context, model string, messages []ChatRequestMessage) (ChatMessage, error) {
 	baseURL, _ := c.configSnapshot()
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return ChatMessage{}, ErrModelRequired
 	}
-	payload := struct {
-		Model            string        `json:"model"`
-		Stream           bool          `json:"stream"`
-		IncludeReasoning bool          `json:"include_reasoning"`
-		Messages         []ChatMessage `json:"messages"`
-	}{
+	payload := chatCompletionRequest{
 		Model:            model,
 		Stream:           false,
 		IncludeReasoning: false,
@@ -214,6 +241,30 @@ func (c *AIClient) httpClient() *http.Client {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.http
+}
+
+func (c *AIClient) resolveChatContentParts(ctx context.Context, parts []ChatContentPart) ([]ChatContentPart, error) {
+	resolved := make([]ChatContentPart, 0, len(parts))
+	for _, part := range parts {
+		switch part.Type {
+		case "text":
+			resolved = append(resolved, part)
+		case "image_url":
+			if part.ImageURL == nil {
+				return nil, errors.New("图片内容缺少URL")
+			}
+			if strings.HasPrefix(part.ImageURL.URL, "data:") {
+				resolved = append(resolved, part)
+				continue
+			}
+			dataURL, err := ResolveImageDataURL(ctx, c.httpClient(), part.ImageURL.URL)
+			if err != nil {
+				return nil, err
+			}
+			resolved = append(resolved, ChatContentPart{Type: "image_url", ImageURL: &ChatImageURL{URL: dataURL}})
+		}
+	}
+	return resolved, nil
 }
 
 func newAIHTTPClient(proxyAddress string) *http.Client {

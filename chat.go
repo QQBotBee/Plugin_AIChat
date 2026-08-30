@@ -85,18 +85,27 @@ func (s *ChatService) Handle(ctx context.Context, target ChatTarget, message str
 	if !ok {
 		return false
 	}
+	parsed := ParseMessageContent(input)
 	sessionKey := SessionKey(target.UserID)
 	history, err := s.sessions.Load(sessionKey)
 	if err != nil {
 		s.logError("读取AI会话失败: " + err.Error())
 		return false
 	}
-	messages, err := BuildMessagesForTurn(ctx, s.client, cfg, history, input)
+	messages, err := BuildMessagesForTurn(ctx, s.client, cfg, history, parsed.Text)
 	if err != nil {
 		s.logError("构造AI消息失败: " + err.Error())
 		return false
 	}
-	reply, err := s.client.Chat(ctx, cfg.Model, messages)
+	var reply ChatMessage
+	if hasImagePart(parsed.Parts) {
+		requestMessages := buildTextOnlyRequestMessages(messages)
+		userParts := buildRequestContentParts(parsed.Parts)
+		requestMessages = replaceLastUserContent(requestMessages, userParts)
+		reply, err = s.client.ChatMultimodal(ctx, cfg.Model, requestMessages)
+	} else {
+		reply, err = s.client.Chat(ctx, cfg.Model, messages)
+	}
 	persistTurn := err == nil
 	if err != nil {
 		reply = ChatMessage{Role: "assistant", Content: friendlyAIError(err)}
@@ -116,6 +125,30 @@ func (s *ChatService) Handle(ctx context.Context, target ChatTarget, message str
 		}
 	}
 	return true
+}
+
+func hasImagePart(parts []MessageContentPart) bool {
+	for _, part := range parts {
+		if part.Type == "image" {
+			return true
+		}
+	}
+	return false
+}
+
+func buildRequestContentParts(parts []MessageContentPart) []ChatContentPart {
+	out := make([]ChatContentPart, 0, len(parts))
+	for _, part := range parts {
+		switch part.Type {
+		case "text":
+			if strings.TrimSpace(part.Text) != "" {
+				out = append(out, ChatContentPart{Type: "text", Text: part.Text})
+			}
+		case "image":
+			out = append(out, ChatContentPart{Type: "image_url", ImageURL: &ChatImageURL{URL: part.URL}})
+		}
+	}
+	return out
 }
 
 func ParseMentionAIInput(robotJSON, message string) (string, bool) {
