@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	ChatTargetFriend = "friend"
-	ChatTargetGroup  = "group"
+	ChatTargetFriend  = "friend"
+	ChatTargetGroup   = "group"
+	ChatTargetChannel = "channel"
 )
 
 type ChatTarget struct {
@@ -76,6 +77,8 @@ func (s *ChatService) Handle(ctx context.Context, target ChatTarget, message str
 		} else {
 			input, ok = ParseAIInput(message, cfg.PublicPrefix)
 		}
+	case ChatTargetChannel:
+		input, ok = ParseAIInput(message, cfg.PublicPrefix)
 	default:
 		return false
 	}
@@ -179,6 +182,8 @@ func (target ChatTarget) enabled(cfg AIConfig) bool {
 		return cfg.EnableFriend
 	case ChatTargetGroup:
 		return cfg.EnableGroup
+	case ChatTargetChannel:
+		return cfg.EnableChannel
 	default:
 		return false
 	}
@@ -227,7 +232,7 @@ func InitializePluginServices(dataDir string, logger func(string)) {
 	if err == nil {
 		_ = SaveAIConfig(configPath, cfg)
 	}
-	client := NewAIClientWithProxy("", cfg.ProxyAddress)
+	client := NewAIClientFromConfig(cfg, nil)
 	chat := NewChatService(configPath, NewSessionStore(filepath.Join(dataDir, "sessions")), client)
 	chat.log = logger
 	pluginRuntime.Lock()

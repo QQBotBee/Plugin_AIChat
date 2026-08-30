@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,7 +61,7 @@ type HTTPService struct {
 func NewHTTPService(configPath string, client *AIClient) *HTTPService {
 	cfg, _ := LoadAIConfig(configPath)
 	if client == nil {
-		client = NewAIClientWithProxy("", cfg.ProxyAddress)
+		client = NewAIClientFromConfig(cfg, nil)
 	}
 	return &HTTPService{configPath: configPath, client: client, port: cfg.Port}
 }
@@ -183,7 +184,9 @@ func (s *HTTPService) handleConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.client.ConfigureProxy(cfg.ProxyAddress)
+		if s.client != nil {
+			s.client.UpdateConfig(cfg)
+		}
 		s.mu.Lock()
 		if s.server == nil {
 			s.port = cfg.Port
@@ -196,19 +199,37 @@ func (s *HTTPService) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *HTTPService) handleModels(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		if s.client != nil {
+			if _, err := os.Stat(s.configPath); err == nil {
+				if cfg, err := LoadAIConfig(s.configPath); err == nil {
+					s.client.UpdateConfig(cfg)
+				}
+			}
+		}
+		models, err := s.client.ListFreeModels(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string][]string{"models": models})
+	case http.MethodPost:
+		var cfg AIConfig
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		client := NewAIClientFromConfig(cfg, nil)
+		models, err := client.ListFreeModels(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string][]string{"models": models})
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
-	if cfg, err := LoadAIConfig(s.configPath); err == nil {
-		s.client.ConfigureProxy(cfg.ProxyAddress)
-	}
-	models, err := s.client.ListFreeModels(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	writeJSON(w, map[string][]string{"models": models})
 }
 
 func (s *HTTPService) handleProxyCheck(w http.ResponseWriter, r *http.Request) {
@@ -334,6 +355,15 @@ button.primary{background:#1a73e8;border-color:#1a73e8;color:#fff}
 <h1>AI智能聊天设置</h1>
 <div id="status"></div>
 <div id="message" style="margin:10px 0;font-weight:600;"></div>
+<label for="providerType">接口类型</label>
+<select id="providerType">
+<option value="opencode">OPENCODE 内置</option>
+<option value="openai_compatible">OpenAI 兼容</option>
+</select>
+<label for="baseUrl">接口地址</label>
+<input id="baseUrl" placeholder="https://api.example.com/v1">
+<label for="apiKey">API Key</label>
+<input id="apiKey" type="password" placeholder="sk-...">
 <label for="model">模型名称</label>
 <div class="row"><select id="models"></select><button type="button" id="loadModels">获取可用模型列表</button></div>
 <input id="model" placeholder="例如 xxx-free">
@@ -363,7 +393,7 @@ button.primary{background:#1a73e8;border-color:#1a73e8;color:#fff}
 <script>
 function showMessage(text){message.textContent=text;}
 function buildPayload(){
- return {port:0,model:model.value,system_prompt:system.value,conversation_limit:Number(limit.value),proxy_address:proxy.value,public_prefix:prefix.value,public_trigger_mode:triggerMode.value,enable_friend:friend.checked,enable_group:group.checked};
+ return {provider_type:providerType.value,base_url:baseUrl.value,api_key:apiKey.value,port:0,model:model.value,system_prompt:system.value,conversation_limit:Number(limit.value),proxy_address:proxy.value,public_prefix:prefix.value,public_trigger_mode:triggerMode.value,enable_friend:friend.checked,enable_group:group.checked};
 }
 function renderProxyResults(results){
  if(!results || !results.length){
@@ -372,12 +402,20 @@ function renderProxyResults(results){
  }
  proxyResults.textContent=results.map(v=>v.name+'：'+(v.ok?'可用':'失败')+'，'+(v.latency_ms||0)+'ms'+(v.error?'，'+v.error:'')).join('\n');
 }
+function syncProviderFields(){
+ const custom=providerType.value==='openai_compatible';
+ baseUrl.disabled=!custom;
+ apiKey.disabled=!custom;
+}
 async function loadStatus(doneText){
  try{
   const r=await fetch('/api/status');
   const s=await r.json();
   const c=s.config;
   status.textContent='HTTP服务：'+(s.running?'运行中':'未启动')+'；访问地址：'+s.url;
+  providerType.value=c.provider_type||'opencode';
+  baseUrl.value=c.base_url||'';
+  apiKey.value=c.api_key||'';
   model.value=c.model||'';
   system.value=c.system_prompt||'';
   limit.value=c.conversation_limit||80;
@@ -386,16 +424,18 @@ async function loadStatus(doneText){
   prefix.value=c.public_prefix||'#';
   friend.checked=!!c.enable_friend;
   group.checked=!!c.enable_group;
+  syncProviderFields();
   showMessage(doneText||'配置已加载');
  }catch(e){
   showMessage('读取配置失败：'+e.message);
  }
 }
+providerType.onchange=()=>{syncProviderFields();};
 loadModels.onclick=async()=>{
  try{
   showMessage('正在获取模型列表...');
   models.innerHTML='';
-  const r=await fetch('/api/models');
+  const r=await fetch('/api/models',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(buildPayload())});
   if(!r.ok) throw new Error(await r.text());
   const data=await r.json();
   (data.models||[]).forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;models.appendChild(o)});

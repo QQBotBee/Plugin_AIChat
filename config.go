@@ -9,19 +9,25 @@ import (
 )
 
 const (
-	defaultHTTPPort          = 8765
-	defaultConversationLimit = 80
-	minConversationLimit     = 4
+	defaultHTTPPort                = 8765
+	defaultConversationLimit       = 80
+	minConversationLimit           = 4
+	defaultOpenAICompatibleBaseURL = "https://api.openai.com/v1"
 )
 
 const (
-	PublicTriggerPrefix  = "prefix"
-	PublicTriggerMention = "mention"
+	ProviderOpenCode         = "opencode"
+	ProviderOpenAICompatible = "openai_compatible"
+	PublicTriggerPrefix      = "prefix"
+	PublicTriggerMention     = "mention"
 )
 
-const defaultSystemPrompt = "你的名字：小猪猪。回复要求：始终以调皮可爱的小猪猪口吻进行对话。"
+const defaultSystemPrompt = "你的名字：小猪猪。回复要求：始终以调皮可爱的小猪猪口吻进行对话。绝对禁止使用任何Markdown语法。"
 
 type AIConfig struct {
+	ProviderType      string `json:"provider_type"`
+	BaseURL           string `json:"base_url"`
+	APIKey            string `json:"api_key"`
 	Port              int    `json:"port"`
 	Model             string `json:"model"`
 	SystemPrompt      string `json:"system_prompt"`
@@ -31,10 +37,13 @@ type AIConfig struct {
 	PublicTriggerMode string `json:"public_trigger_mode"`
 	EnableFriend      bool   `json:"enable_friend"`
 	EnableGroup       bool   `json:"enable_group"`
+	EnableChannel     bool   `json:"enable_channel"`
 }
 
 func DefaultAIConfig() AIConfig {
 	return AIConfig{
+		ProviderType:      ProviderOpenCode,
+		BaseURL:           defaultAIBaseURL,
 		Port:              defaultHTTPPort,
 		SystemPrompt:      defaultSystemPrompt,
 		ConversationLimit: defaultConversationLimit,
@@ -42,13 +51,30 @@ func DefaultAIConfig() AIConfig {
 		PublicTriggerMode: PublicTriggerPrefix,
 		EnableFriend:      true,
 		EnableGroup:       true,
+		EnableChannel:     true,
 	}
 }
 
 func NormalizeAIConfig(cfg AIConfig) AIConfig {
+	cfg.ProviderType = strings.ToLower(strings.TrimSpace(cfg.ProviderType))
+	switch cfg.ProviderType {
+	case "", ProviderOpenCode:
+		cfg.ProviderType = ProviderOpenCode
+		cfg.BaseURL = defaultAIBaseURL
+	case ProviderOpenAICompatible:
+		cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = defaultOpenAICompatibleBaseURL
+		}
+	default:
+		cfg.ProviderType = ProviderOpenCode
+		cfg.BaseURL = defaultAIBaseURL
+	}
+	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	cfg.Model = strings.TrimSpace(cfg.Model)
 	cfg.SystemPrompt = strings.TrimSpace(cfg.SystemPrompt)
 	cfg.ProxyAddress = strings.TrimSpace(cfg.ProxyAddress)
+	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	if cfg.Port <= 0 || cfg.Port > 65535 {
 		cfg.Port = defaultHTTPPort
 	}

@@ -141,6 +141,19 @@ func onChannelMessage(
 	message string, // 收到的频道消息内容
 	messageID string, // 消息 ID，用于撤回、引用等上下文相关 API
 ) int {
+	bee, err := NewBeeAPI(robotJSON)
+	if err != nil {
+		return MessageContinue
+	}
+
+	ensureRuntimeChatServices(bee)
+	if handleRuntimeAIChat(ChatTarget{Kind: ChatTargetChannel, SourceID: subChannelID, UserID: userID}, message, func(markdown MarkdownMessage) error {
+		_, err := bee.ctx.SendChannelMarkdown(subChannelID, markdown, false)
+		return err
+	}) {
+		return MessageContinue
+	}
+
 	// 示例：向消息来源子频道发送消息。
 	// _, _ = bee.Channel(subChannelID).SendText("你好哦")
 	//

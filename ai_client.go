@@ -27,9 +27,11 @@ type ChatMessage struct {
 }
 
 type AIClient struct {
-	baseURL string
-	mu      sync.RWMutex
-	http    *http.Client
+	mu           sync.RWMutex
+	baseURL      string
+	apiKey       string
+	providerType string
+	http         *http.Client
 }
 
 func NewAIClient(baseURL string, httpClient *http.Client) *AIClient {
@@ -40,11 +42,24 @@ func NewAIClient(baseURL string, httpClient *http.Client) *AIClient {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 60 * time.Second}
 	}
-	return &AIClient{baseURL: baseURL, http: httpClient}
+	return &AIClient{baseURL: baseURL, providerType: ProviderOpenCode, http: httpClient}
 }
 
 func NewAIClientWithProxy(baseURL, proxyAddress string) *AIClient {
 	return NewAIClient(baseURL, newAIHTTPClient(proxyAddress))
+}
+
+func NewAIClientFromConfig(cfg AIConfig, httpClient *http.Client) *AIClient {
+	cfg = NormalizeAIConfig(cfg)
+	if httpClient == nil {
+		httpClient = newAIHTTPClient(cfg.ProxyAddress)
+	}
+	return &AIClient{
+		baseURL:      cfg.BaseURL,
+		apiKey:       cfg.APIKey,
+		providerType: cfg.ProviderType,
+		http:         httpClient,
+	}
 }
 
 func (c *AIClient) ConfigureProxy(proxyAddress string) {
@@ -56,12 +71,26 @@ func (c *AIClient) ConfigureProxy(proxyAddress string) {
 	c.mu.Unlock()
 }
 
+func (c *AIClient) UpdateConfig(cfg AIConfig) {
+	if c == nil {
+		return
+	}
+	cfg = NormalizeAIConfig(cfg)
+	c.mu.Lock()
+	c.baseURL = cfg.BaseURL
+	c.apiKey = cfg.APIKey
+	c.providerType = cfg.ProviderType
+	c.mu.Unlock()
+	c.ConfigureProxy(cfg.ProxyAddress)
+}
+
 func (c *AIClient) ListFreeModels(ctx context.Context) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
+	baseURL, providerType := c.configSnapshot()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/models", nil)
 	if err != nil {
 		return nil, err
 	}
-	addOpenCodeHeaders(req)
+	c.decorateRequest(req)
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return nil, err
@@ -80,7 +109,13 @@ func (c *AIClient) ListFreeModels(ctx context.Context) ([]string, error) {
 	}
 	var models []string
 	for _, model := range out.Data {
-		if strings.Contains(model.ID, "free") {
+		if providerType == ProviderOpenCode {
+			if strings.Contains(model.ID, "free") {
+				models = append(models, model.ID)
+			}
+			continue
+		}
+		if strings.TrimSpace(model.ID) != "" {
 			models = append(models, model.ID)
 		}
 	}
@@ -88,6 +123,7 @@ func (c *AIClient) ListFreeModels(ctx context.Context) ([]string, error) {
 }
 
 func (c *AIClient) Chat(ctx context.Context, model string, messages []ChatMessage) (ChatMessage, error) {
+	baseURL, _ := c.configSnapshot()
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return ChatMessage{}, ErrModelRequired
@@ -107,12 +143,12 @@ func (c *AIClient) Chat(ctx context.Context, model string, messages []ChatMessag
 	if err != nil {
 		return ChatMessage{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return ChatMessage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	addOpenCodeHeaders(req)
+	c.decorateRequest(req)
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return ChatMessage{}, fmt.Errorf("%w: %v", ErrAIUnavailable, err)
@@ -138,6 +174,40 @@ func (c *AIClient) Chat(ctx context.Context, model string, messages []ChatMessag
 		reply.Role = "assistant"
 	}
 	return reply, nil
+}
+
+func (c *AIClient) configSnapshot() (baseURL, providerType string) {
+	if c == nil {
+		return defaultAIBaseURL, ProviderOpenCode
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	baseURL = c.baseURL
+	providerType = c.providerType
+	if baseURL == "" {
+		baseURL = defaultAIBaseURL
+	}
+	if providerType == "" {
+		providerType = ProviderOpenCode
+	}
+	return baseURL, providerType
+}
+
+func (c *AIClient) decorateRequest(req *http.Request) {
+	if c == nil || req == nil {
+		return
+	}
+	c.mu.RLock()
+	providerType := c.providerType
+	apiKey := c.apiKey
+	c.mu.RUnlock()
+	if providerType == ProviderOpenAICompatible {
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		return
+	}
+	addOpenCodeHeaders(req)
 }
 
 func (c *AIClient) httpClient() *http.Client {
